@@ -1,14 +1,17 @@
+import RatePlansSection from '../components/settings/RatePlansSection';
+import BackupSection from '../components/settings/BackupSection';
+import NotifySection from '../components/settings/NotifySection';
 import { useState, useRef, useEffect } from 'react';
 import { useHotel } from '../context/HotelContext';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../components/ToastProvider';
-import { ROOM_TYPES, AMENITIES_LIST, formatCurrency, initialRooms, formatDateTime, todayStr } from '../data/initialData';
+import { ROOM_TYPES, AMENITIES_LIST, formatCurrency, formatDateTime, todayStr } from '../data/initialData';
 import { getAuditLog, AUDIT_EVENT, AUDIT_ACTION_LABELS } from '../utils/audit';
 import { exportToCsv } from '../utils/exportCsv';
 import { validatePasswordStrength } from '../utils/security';
 
 export default function SettingsPage() {
-  const { rooms, updateRoom, addRoom, deleteRoom, setRoomStatus, hotelInfo, setHotelInfo, guestActivities, updateActivity } = useHotel();
+  const { rooms, updateRoom, addRoom, deleteRoom, hotelInfo, setHotelInfo, guestActivities, updateActivity } = useHotel();
   const { users, addUser, updateUser, deleteUser, currentUser } = useAuth();
   const { toast } = useToast();
   const [tab, setTab] = useState('hotel');
@@ -22,9 +25,12 @@ export default function SettingsPage() {
   const tabs = [
     { key: 'hotel', label: '🏨 ຣີສອດ' },
     { key: 'rooms', label: '🛏️ ຈັດການຫ້ອງ' },
+    { key: 'rates', label: '📅 ລາຄາລະດູການ' },
     { key: 'activities', label: '🪂 ຈັດການກິດຈະກຳ' },
     { key: 'users', label: '👤 ຜູ້ໃຊ້ງານ' },
-    { key: 'audit', label: '📜 ບັນທຶກການເຮັດວຽກ (Audit Log)' },
+    { key: 'backup', label: '💾 ສຳຮອງ & ກູ້ຄືນ' },
+    { key: 'notify', label: '🔔 ແຈ້ງເຕືອນ' },
+    { key: 'audit', label: '📜 ບັນທຶກການເຮັດວຽກ' },
   ];
 
   return (
@@ -276,6 +282,7 @@ export default function SettingsPage() {
                   <th>ชື່ຜູ້ໃຊ້</th>
                   <th>ຊື່</th>
                   <th>ສິດ</th>
+                  <th>ສະຖານະ</th>
                   <th>ເບີໂທ</th>
                   <th>ຈັດການ</th>
                 </tr>
@@ -288,16 +295,25 @@ export default function SettingsPage() {
                       <td style={{ fontFamily: 'monospace', color: 'var(--text-accent)' }}>{u.username}</td>
                       <td className="td-name">{u.name}</td>
                       <td>{roleLabels[u.role] || u.role}</td>
+                      <td>
+                        <span style={{ fontSize: '0.75rem', fontWeight: 700, padding: '2px 8px', borderRadius: '4px', background: u.active !== false ? '#dcfce7' : '#fee2e2', color: u.active !== false ? '#15803d' : '#b91c1c' }}>
+                          {u.active !== false ? '🟢 ໃຊ້ງານ' : '🔴 ປິດໃຊ້'}
+                        </span>
+                      </td>
                       <td>{u.phone || '-'}</td>
                       <td style={{ display: 'flex', gap: '6px' }}>
                         <button className="btn btn-outline-primary btn-sm" onClick={() => setEditUser({ ...u })}>
                           ✏️ ແກ້ໄຂ
                         </button>
                         {u.id !== currentUser?.id && (
-                          <button className="btn btn-danger btn-sm" onClick={() => {
+                          <button className="btn btn-danger btn-sm" onClick={async () => {
                             if (window.confirm(`ລຶບຜູ້ໃຊ້ ${u.username}?`)) {
-                              deleteUser(u.id);
-                              toast('ລຶບຜູ້ໃຊ້ສຳເລັດ', 'success');
+                              try {
+                                await deleteUser(u.id);
+                                toast('ລຶບຜູ້ໃຊ້ສຳເລັດ', 'success');
+                              } catch (err) {
+                                toast(err.message, 'error');
+                              }
                             }
                           }}>
                             🗑️
@@ -312,6 +328,12 @@ export default function SettingsPage() {
           </div>
         </div>
       )}
+
+      {tab === 'rates' && <RatePlansSection />}
+
+      {tab === 'backup' && <BackupSection />}
+
+      {tab === 'notify' && <NotifySection />}
 
       {tab === 'audit' && (
         <AuditLogSection />
@@ -349,15 +371,19 @@ export default function SettingsPage() {
         <UserEditModal
           user={editUser || { username: '', password: '', name: '', phone: '', role: 'reception' }}
           isNew={!editUser}
-          onSave={(data) => {
-            if (editUser) {
-              updateUser(editUser.id, data);
-              toast('ອັບເດດຜູ້ໃຊ້ສຳເລັດ! ✅', 'success');
-              setEditUser(null);
-            } else {
-              addUser(data);
-              toast('ເພີ່ມຜູ້ໃຊ້ສຳເລັດ! ✅', 'success');
-              setShowAddUser(false);
+          onSave={async (data) => {
+            try {
+              if (editUser) {
+                await updateUser(editUser.id, data);
+                toast('ອັບເດດຜູ້ໃຊ້ສຳເລັດ! ✅', 'success');
+                setEditUser(null);
+              } else {
+                await addUser(data);
+                toast('ເພີ່ມຜູ້ໃຊ້ສຳເລັດ! ✅', 'success');
+                setShowAddUser(false);
+              }
+            } catch (err) {
+              toast(err.message, 'error');
             }
           }}
           onClose={() => { setEditUser(null); setShowAddUser(false); }}
@@ -588,6 +614,23 @@ function UserEditModal({ user, isNew, onSave, onClose }) {
             <label className="form-label">ເບີໂທ</label>
             <input className="form-input" value={form.phone || ''} onChange={e => set('phone', e.target.value)} placeholder="020 xxxx xxxx" />
           </div>
+          {!isNew && (
+            <div style={{ marginTop: '12px' }}>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '0.85rem' }}>
+                <input
+                  type="checkbox"
+                  checked={form.active !== false}
+                  onChange={e => set('active', e.target.checked)}
+                />
+                <span>ເປີດໃຊ້ງານບັນຊີນີ້ (Active)</span>
+              </label>
+            </div>
+          )}
+          {!isNew && form.password && (
+            <div style={{ fontSize: '0.72rem', color: '#b45309', background: '#fef3c7', padding: '6px 10px', borderRadius: '4px', marginTop: '10px' }}>
+              * ເມື່ອຣີເຊັດລະຫັດຜ່ານ ຜູ້ໃຊ້ນີ້ຈະຕ້ອງປ່ຽນລະຫັດໃໝ່ດ້ວຍຕົນເອງຕອນເຂົ້າລະບົບຄັ້ງຕໍ່ໄປ.
+            </div>
+          )}
         </div>
         <div className="modal-footer">
           <button className="btn btn-ghost" onClick={onClose}>ຍົກເລີກ</button>

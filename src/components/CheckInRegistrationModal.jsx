@@ -314,7 +314,7 @@ export default function CheckInRegistrationModal({
 }) {
   const {
     rooms, bookings, hotelInfo, lang,
-    checkIn, updateBooking, createBooking, isRoomAvailableForDates
+    checkIn, updateBooking, createBooking, isRoomAvailableForDates, quoteStay
   } = useHotel();
   const { currentUser } = useAuth();
   const { toast } = useToast();
@@ -369,8 +369,15 @@ export default function CheckInRegistrationModal({
 
   const activeRoom = rooms.find(r => r.id === form.roomId) || room;
 
+  const quote = useMemo(() => {
+    if (!activeRoom || !form.checkIn || !form.checkOut || form.checkIn >= form.checkOut) {
+      return { nights: 1, total: (activeRoom?.price || 0), hasAdjustment: false, nightly: [] };
+    }
+    return quoteStay ? quoteStay(activeRoom, form.checkIn, form.checkOut) : { nights: 1, total: (activeRoom.price || 0), hasAdjustment: false, nightly: [] };
+  }, [activeRoom, form.checkIn, form.checkOut, quoteStay]);
+
   const nights = form.checkIn && form.checkOut && form.checkOut > form.checkIn
-    ? Math.max(1, daysBetween(form.checkIn, form.checkOut))
+    ? quote.nights
     : (booking?.nights || 1);
 
   const groupRooms = booking?.groupRooms?.length > 1 ? booking.groupRooms : null;
@@ -383,7 +390,7 @@ export default function CheckInRegistrationModal({
     : (booking?.roomPrice ?? activeRoom?.price ?? 0);
   const computedTotal = groupRooms
     ? Number(booking?.groupTotalAmount ?? (unitPrice * nights))
-    : (booking ? Number(booking.totalAmount || 0) : unitPrice * nights);
+    : (booking ? Number(booking.totalAmount || 0) : quote.total);
 
   const depositPaid = groupRooms && booking?.groupPaidAmount !== undefined
     ? Number(booking.groupPaidAmount)

@@ -375,3 +375,15 @@ export const BOOKING_STATUS_META = {
   cancelled: { label: 'ຍົກເລີກ', color: '#ef4444', emoji: '🔴' },
   no_show: { label: 'ບໍ່ມາ (No-show)', color: '#a855f7', emoji: '👻' },
 };
+
+export const EXPENSE_CATEGORIES = {
+  maintenance: { label: 'ສ້ອມແປງ & ບຳລຸງຮັກສາ', icon: '🛠️' },
+  utilities: { label: 'ຄ່ານ້ຳ / ຄ່າໄຟ / ອິນເຕີເນັດ', icon: '💡' },
+  salary: { label: 'ເງິນເດືອນ & ແຮງງານ', icon: '👥' },
+  supplies: { label: 'ເຄື່ອງໃຊ້ & ອຸປະກອນຫ້ອງ', icon: '🧻' },
+  food: { label: 'ວັດຖຸດິບອາຫານ & ເຄື່ອງດື່ມ', icon: '🍲' },
+  laundry: { label: 'ຊັກລີດຜ້າປູ & ຜ້າເຊັດ', icon: '🧺' },
+  marketing: { label: 'ການຕະຫຼາດ & ໂຄສະນາ', icon: '📢' },
+  tax: { label: 'ພາສີ & ຄ່າທຳນຽມ', icon: '📑' },
+  other: { label: 'ລາຍຈ່າຍອື່ນໆ', icon: '📦' },
+};

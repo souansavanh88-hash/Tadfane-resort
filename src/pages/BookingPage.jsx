@@ -12,6 +12,7 @@ import RoomModal from '../components/RoomModal';
 import PrintReceipt from '../components/PrintReceipt';
 import CheckInRegistrationModal from '../components/CheckInRegistrationModal';
 import ShareBookingModal from '../components/ShareBookingModal';
+import CancelBookingModal from '../components/CancelBookingModal';
 import { RoomCalendarTable, DateByDateBookingsView, DailyLedgerSheet } from '../components/RoomTableViews';
 
 const TABLE_STATUS_COLORS = {
@@ -23,10 +24,12 @@ const TABLE_STATUS_COLORS = {
   cancelled: { text: '#b91c1c', bg: '#fee2e2', border: '#fca5a5', label: '❌ ຍົກເລີກ' },
 };
 
+const REFUND_METHOD_LABELS = { cash: 'ເງິນສົດ', transfer: 'ໂອນ', qr: 'QR', card: 'ບັດ' };
+
 export default function BookingPage({ navigate }) {
   const {
-    rooms, bookings, getRoomStatusOnDate,
-    cancelBooking, markNoShow, confirmBooking, rejectBooking, markClean, t
+    rooms, bookings, hotelInfo, getRoomStatusOnDate,
+    markNoShow, confirmBooking, markClean, t
   } = useHotel();
   const { toast } = useToast();
 
@@ -49,6 +52,7 @@ export default function BookingPage({ navigate }) {
   const [receiptTarget, setReceiptTarget] = useState(null); // { booking, room }
   const [shareTarget, setShareTarget] = useState(null); // { booking, room }
   const [proofPreview, setProofPreview] = useState(null); // booking
+  const [cancelTarget, setCancelTarget] = useState(null); // { booking, mode: 'cancel' | 'reject' }
 
   const gridDate = selectedDate || today;
   const floors = [...new Set(rooms.map(r => r.floor))].sort((a, b) => a - b);
@@ -137,11 +141,7 @@ export default function BookingPage({ navigate }) {
   };
 
   const handleRejectPending = (b) => {
-    const reason = window.prompt('ເຫດຜົນໃນການປະຕິເສດ:', 'ຫ້ອງບໍ່ວ່າງ / ບໍ່ພົບຫຼັກຖານໂອນເງິນ');
-    if (reason !== null) {
-      rejectBooking(b.id, reason);
-      toast(`🚫 ປະຕິເສດການຈອງ ${b.id} ແລ້ວ`, 'info');
-    }
+    setCancelTarget({ booking: b, mode: 'reject' });
   };
 
   const handleNoShow = (b) => {
@@ -152,11 +152,19 @@ export default function BookingPage({ navigate }) {
   };
 
   const handleCancel = (b) => {
-    const reason = window.prompt('ເຫດຜົນໃນການຍົກເລີກ:', 'ລູກຄ້າຂໍຍົກເລີກ');
-    if (reason !== null) {
-      cancelBooking(b.id, reason);
-      toast(`❌ ຍົກເລີກການຈອງ ${b.id} ແລ້ວ`, 'info');
-    }
+    setCancelTarget({ booking: b, mode: 'cancel' });
+  };
+
+  const handleCancelDone = ({ refundAmount } = {}) => {
+    const tg = cancelTarget;
+    if (!tg) return;
+    const refundText = refundAmount > 0 ? ` · ຄືນເງິນ ${formatCurrency(refundAmount)}` : '';
+    toast(
+      tg.mode === 'reject'
+        ? `🚫 ປະຕິເສດການຈອງ ${tg.booking.id} ແລ້ວ${refundText}`
+        : `❌ ຍົກເລີກການຈອງ ${tg.booking.id} ແລ້ວ${refundText}`,
+      'info'
+    );
   };
 
   const findRoomForBooking = (b) => {
@@ -620,9 +628,14 @@ export default function BookingPage({ navigate }) {
                               )}
 
                               {(b.status === 'cancelled' || b.status === 'no_show') && (
-                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                                  {b.cancelReason || b.status}
-                                </span>
+                                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                  <div>{b.cancelReason || b.noShowReason || b.status}</div>
+                                  {Number(b.refundAmount) > 0 && (
+                                    <div style={{ color: '#b45309', fontWeight: 700, marginTop: 2 }}>
+                                      💸 ຄືນເງິນ {formatCurrency(b.refundAmount)} ({REFUND_METHOD_LABELS[b.refundMethod] || b.refundMethod || 'ເງິນສົດ'})
+                                    </div>
+                                  )}
+                                </div>
                               )}
                             </div>
                           </td>
@@ -739,6 +752,17 @@ export default function BookingPage({ navigate }) {
             </div>
           </div>
         </div>
+      )}
+
+      {/* Cancel / Reject Booking Modal (with refund) */}
+      {cancelTarget && (
+        <CancelBookingModal
+          booking={cancelTarget.booking}
+          mode={cancelTarget.mode}
+          defaultReason={cancelTarget.mode === 'reject' ? 'ຫ້ອງບໍ່ວ່າງ / ບໍ່ພົບຫຼັກຖານໂອນເງິນ' : 'ລູກຄ້າຂໍຍົກເລີກ'}
+          onClose={() => setCancelTarget(null)}
+          onDone={handleCancelDone}
+        />
       )}
 
       {/* Payment Proof Preview Modal */}

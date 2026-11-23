@@ -136,11 +136,12 @@ const FORM_TEXT = {
 
 export default function GuestBookingConfirmationPage({
   bookingId,
+  publicToken,
   encodedData,
   onGoHome,
   onGoLogin,
 }) {
-  const { rooms, bookings, hotelInfo, updateBooking } = useHotel();
+  const { rooms, bookings, hotelInfo, updateBooking, fetchPublicBooking, signPublicBooking, isStaff } = useHotel();
   const { toast } = useToast();
 
   const [formLang, setFormLang] = useState('bi'); // 'bi' | 'lo' | 'en' | 'th' | 'vi'
@@ -202,18 +203,46 @@ export default function GuestBookingConfirmationPage({
     };
     setBookingData(updated);
 
-    // Update in context & localStorage if booking exists
+    // Update in server (staff via updateBooking, guest via signPublicBooking)
     if (bookingData?.id) {
-      updateBooking(bookingData.id, {
-        signatureDataUrl: dataUrl,
-        signedAt: nowIso,
-      });
+      if (isStaff) {
+        updateBooking(bookingData.id, {
+          signatureDataUrl: dataUrl,
+          signedAt: nowIso,
+        });
+      }
+      if (publicToken || bookingData?.publicToken) {
+        signPublicBooking(bookingData.id, publicToken || bookingData?.publicToken, dataUrl).catch(e => {
+          console.error('Failed to sync signature to server:', e);
+        });
+      }
     }
 
     if (dataUrl) {
       toast('✍️ ບັນທຶກລາຍເຊັນຂອງທ່ານສຳເລັດແລ້ວ! ທ່ານສາມາດກົດ "Save PDF" ເພື່ອດາວໂຫຼດໃບຢືນຢັນເກັບໄວ້ໄດ້ເລີຍ', 'success');
     }
   };
+
+  // If publicToken is present, fetch the fresh booking from server
+  useEffect(() => {
+    let active = true;
+    if (bookingId && (publicToken || !encodedData)) {
+      fetchPublicBooking(bookingId, publicToken)
+        .then(fresh => {
+          if (active && fresh) {
+            setBookingData(prev => ({ ...prev, ...fresh }));
+            if (fresh.signatureDataUrl) {
+              setSignatureDataUrl(fresh.signatureDataUrl);
+              setSignedAt(fresh.signedAt || '');
+            }
+          }
+        })
+        .catch(err => {
+          console.warn('Could not fetch public booking from server:', err.message);
+        });
+    }
+    return () => { active = false; };
+  }, [bookingId, publicToken, encodedData, fetchPublicBooking]);
 
   // Find room object
   const roomObj = useMemo(() => {

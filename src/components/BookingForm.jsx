@@ -16,7 +16,7 @@ export default function BookingForm({
   onClose,
   onBack,
 }) {
-  const { rooms, createBooking, updateBooking, isRoomAvailableForDates } = useHotel();
+  const { rooms, createBooking, updateBooking, isRoomAvailableForDates, quoteStay } = useHotel();
   const { currentUser, users } = useAuth();
   const { toast } = useToast();
 
@@ -61,10 +61,15 @@ export default function BookingForm({
   }, [completedReceipt]);
 
   const selectedRoom = rooms.find(r => r.id === form.roomId);
-  const nights = form.checkIn && form.checkOut && form.checkOut > form.checkIn
-    ? Math.max(1, daysBetween(form.checkIn, form.checkOut))
-    : 1;
-  const roomTotal = (selectedRoom?.price || 0) * nights;
+  const quote = useMemo(() => {
+    if (!selectedRoom || !form.checkIn || !form.checkOut || form.checkIn >= form.checkOut) {
+      return { nights: 1, total: (selectedRoom?.price || 0), hasAdjustment: false, nightly: [] };
+    }
+    return quoteStay ? quoteStay(selectedRoom, form.checkIn, form.checkOut) : { nights: 1, total: (selectedRoom.price || 0), hasAdjustment: false, nightly: [] };
+  }, [selectedRoom, form.checkIn, form.checkOut, quoteStay]);
+
+  const nights = quote.nights || 1;
+  const roomTotal = quote.total;
   const totalAmount = Math.max(0, roomTotal - Number(form.discount || 0));
   const remainingAmount = Math.max(0, totalAmount - Number(form.deposit || 0));
 
@@ -535,7 +540,7 @@ export default function BookingForm({
 
             <div className="calc-box" style={{ marginBottom: '16px' }}>
               <div className="calc-row">
-                <span>{formatCurrency(selectedRoom?.price || 0)} × {nights} ຄືນ</span>
+                <span>{quote.hasAdjustment ? `${nights} ຄືນ (ລາຄາຕາມລະດູການ)` : `${formatCurrency(selectedRoom?.price || 0)} × ${nights} ຄືນ`}</span>
                 <span style={{ fontWeight: 600 }}>{formatCurrency(roomTotal)}</span>
               </div>
               {Number(form.discount) > 0 && (

@@ -4,16 +4,14 @@
  * without needing staff authentication.
  */
 
+import { getServerLanIps } from './api';
+
 // Custom public or domain URL (if deployed online or using a permanent tunnel)
 export const DEFAULT_PUBLIC_URL = '';
 
-// Default Wi-Fi IP of the host machine so mobile phones on the local network can connect
-export const DEFAULT_LOCAL_IP = '192.168.1.94';
-export const DEFAULT_LOCAL_PORT = '5173';
-
 /**
  * Returns the best base URL for sharing with guests on mobile.
- * If running on localhost or 127.0.0.1, defaults to the local Wi-Fi IP (192.168.1.94:5173).
+ * If running on localhost, uses the server's Wi-Fi IP (reported by /api/health).
  */
 export function getShareBaseUrl(customHost = null) {
   if (customHost && customHost.trim()) {
@@ -28,9 +26,7 @@ export function getShareBaseUrl(customHost = null) {
     return DEFAULT_PUBLIC_URL.trim();
   }
 
-  if (typeof window === 'undefined') {
-    return `http://${DEFAULT_LOCAL_IP}:${DEFAULT_LOCAL_PORT}`;
-  }
+  if (typeof window === 'undefined') return '';
 
   const { hostname, port, protocol, origin } = window.location;
 
@@ -39,9 +35,10 @@ export function getShareBaseUrl(customHost = null) {
     return origin;
   }
 
-  // If on localhost, use the detected Wi-Fi IP
-  const activePort = port || DEFAULT_LOCAL_PORT;
-  return `${protocol}//${DEFAULT_LOCAL_IP}:${activePort}`;
+  // On localhost → use the server machine's Wi-Fi IP so phones can open the link
+  const lanIp = getServerLanIps().find(ip => /^(192\.168|10\.|172\.(1[6-9]|2\d|3[01]))/.test(ip)) || getServerLanIps()[0];
+  if (!lanIp) return origin;
+  return `${protocol}//${lanIp}${port ? `:${port}` : ''}`;
 }
 
 /**
@@ -125,6 +122,7 @@ export function buildBookingPayload(booking = {}, room = null) {
     signatureDataUrl: booking.signatureDataUrl || '',
     signedAt: booking.signedAt || '',
     createdAt: booking.createdAt || new Date().toISOString(),
+    publicToken: booking.publicToken || '',
   };
 }
 
@@ -134,7 +132,12 @@ export function buildBookingPayload(booking = {}, room = null) {
 export function generateBookingShareUrl(booking, room, customHost = null) {
   if (!booking?.id) return '';
   const baseUrl = getShareBaseUrl(customHost);
-  const payload = buildBookingPayload(booking, room);
+  // ມີລະຫັດລັບ → ລູກຄ້າເປີດເບິ່ງຂໍ້ມູນຈິງຈາກ server ໄດ້ (ລິ້ງສັ້ນ, QR ອ່ານງ່າຍ, ເຊັນແລ້ວບັນທຶກເຂົ້າລະບົບ)
+  if (booking.publicToken) {
+    return `${baseUrl}/?booking=${encodeURIComponent(booking.id)}&t=${encodeURIComponent(booking.publicToken)}`;
+  }
+  // ການຈອງເກົ່າທີ່ບໍ່ມີລະຫັດລັບ → ຝັງຂໍ້ມູນໃນລິ້ງ (ບໍ່ລວມລາຍເຊັນເພື່ອບໍ່ໃຫ້ລິ້ງຍາວເກີນ)
+  const payload = { ...buildBookingPayload(booking, room), signatureDataUrl: '' };
   const encoded = encodeBookingPayload(payload);
   return `${baseUrl}/?booking=${encodeURIComponent(booking.id)}&d=${encoded}`;
 }

@@ -244,9 +244,57 @@ export default function DashboardPage({ navigate }) {
                 📑 ຕາຕະລາງລາຍວັນ (1..31)
               </button>
             )}
+            {navigate && (
+              <button
+                className="btn btn-outline-primary"
+                style={{ fontWeight: 700 }}
+                onClick={() => navigate('housekeeping')}
+              >
+                🧹 ໜ້າແມ່ບ້ານ & ສ້ອມແປງ
+              </button>
+            )}
           </div>
         </div>
       </div>
+
+      {/* Prominent Pending Online Bookings Banner */}
+      {isOwnerOrReception && pendingOnlineBookings.length > 0 && (
+        <div
+          style={{
+            background: 'linear-gradient(90deg, #fef3c7, #fde68a)',
+            border: '2px solid #f59e0b',
+            borderRadius: 'var(--radius)',
+            padding: '12px 18px',
+            marginBottom: '16px',
+            display: 'flex',
+            justifyContent: 'space-between',
+            alignItems: 'center',
+            gap: '12px',
+            flexWrap: 'wrap',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '1.6rem' }}>🌐</span>
+            <div>
+              <div style={{ fontWeight: 800, color: '#92400e', fontSize: '0.95rem' }}>
+                ມີການຈອງອອນລາຍລໍຢືນຢັນ {pendingOnlineBookings.length} ລາຍການ
+              </div>
+              <div style={{ fontSize: '0.78rem', color: '#b45309' }}>
+                ລູກຄ້າໄດ້ສົ່ງການຈອງຜ່ານມືຖື/ເວັບໄຊ ກະລຸນາກວດສອບ ແລະ ກົດຢືນຢັນຫ້ອງ
+              </div>
+            </div>
+          </div>
+          {navigate && (
+            <button
+              className="btn btn-warning btn-sm"
+              style={{ fontWeight: 800, padding: '8px 16px' }}
+              onClick={() => navigate('booking')}
+            >
+              📋 ໄປຈັດການການຈອງ →
+            </button>
+          )}
+        </div>
+      )}
 
       {/* Clickable Summary Stat Cards */}
       <div className="stats-grid" style={{ marginBottom: '16px' }}>

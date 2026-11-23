@@ -4,7 +4,7 @@ import { useToast } from './ToastProvider';
 import { formatCurrency, formatDate } from '../data/initialData';
 
 export default function CheckOutModal({ booking, room, onClose, onBack }) {
-  const { checkOut } = useHotel();
+  const { checkOut, getPaidTotal } = useHotel();
   const { toast } = useToast();
   const [extras, setExtras] = useState(
     booking?.extraCharges?.length ? booking.extraCharges.map(e => ({ ...e })) : [{ desc: '', amount: 0 }]
@@ -29,7 +29,7 @@ export default function CheckOutModal({ booking, room, onClose, onBack }) {
 
   const validExtras = extras.filter(e => e.desc && Number(e.amount) > 0);
   const extraTotal = validExtras.reduce((sum, e) => sum + Number(e.amount), 0);
-  const alreadyPaid = (booking.deposit || 0) + (booking.remainingPaid || 0);
+  const alreadyPaid = getPaidTotal ? getPaidTotal(booking) : ((booking.deposit || 0) + (booking.remainingPaid || 0));
   const finalTotal = (booking.totalAmount || 0) + extraTotal;
   const finalRemaining = Math.max(0, finalTotal - alreadyPaid);
 

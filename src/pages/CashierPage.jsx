@@ -1,3 +1,4 @@
+import CancelBookingModal from '../components/CancelBookingModal';
 import { useState, useMemo } from 'react';
 import { useHotel } from '../context/HotelContext';
 import { useAuth } from '../context/AuthContext';
@@ -71,6 +72,9 @@ export default function CashierPage({ navigate }) {
     rooms,
     bookings,
     activitySales,
+    shiftCloses,
+    quoteStay,
+    getBookingPayments,
     getRoomStatusOnDate,
     isRoomAvailableForDates,
     createBooking,
@@ -130,18 +134,13 @@ export default function CashierPage({ navigate }) {
   const [checkInTarget, setCheckInTarget] = useState(null);
   const [checkOutTarget, setCheckOutTarget] = useState(null);
   const [regTarget, setRegTarget] = useState(null);
+  const [cancelTargetBooking, setCancelTargetBooking] = useState(null);
   const [showShiftCloseModal, setShowShiftCloseModal] = useState(false);
   const [shiftRefresh, setRefreshShift] = useState(0);
 
   const closedShiftForDate = useMemo(() => {
-    try {
-      const stored = localStorage.getItem('tadfane_shift_closes');
-      const list = stored ? JSON.parse(stored) : [];
-      return list.find(s => s.date === viewDate) || null;
-    } catch {
-      return null;
-    }
-  }, [viewDate, showShiftCloseModal, shiftRefresh]);
+    return (shiftCloses || []).find(s => s.date === viewDate) || null;
+  }, [viewDate, shiftCloses]);
 
   const roomEntries = useMemo(() => {
     return rooms.map(room => {
@@ -215,7 +214,7 @@ export default function CashierPage({ navigate }) {
     return [selectedRoom, ...extrasList];
   }, [selectedRoom, extraRoomIds, rooms, isRoomAvailableForDates, checkInDate, checkOutDate]);
 
-  const roomSubtotal = allSelectedRooms.reduce((sum, r) => sum + (r.price || 0) * nights, 0);
+  const roomSubtotal = allSelectedRooms.reduce((sum, r) => sum + (quoteStay ? quoteStay(r, checkInDate, checkOutDate).total : (r.price || 0) * nights), 0);
   const validExtras = extras.filter(e => e.desc.trim() && Number(e.amount) > 0);
   const extrasTotal = validExtras.reduce((sum, e) => sum + Number(e.amount), 0);
   const discountNum = Math.max(0, Number(discount || 0));
@@ -324,7 +323,8 @@ export default function CashierPage({ navigate }) {
 
     let primaryCreated = null;
     allSelectedRooms.forEach((rm, idx) => {
-      const rmSubtotal = rm.price * nights;
+      const rmQuote = quoteStay ? quoteStay(rm, checkInDate, checkOutDate) : { nights, total: rm.price * nights, hasAdjustment: false, nightly: [] };
+      const rmSubtotal = rmQuote.total;
       const rmDiscount = idx === 0 ? discountNum : 0;
       const rmNet = Math.max(0, rmSubtotal - rmDiscount);
       const rmExtras = idx === 0 ? validExtras.map(ex => ({ desc: ex.desc.trim(), amount: Number(ex.amount) })) : [];
@@ -348,6 +348,7 @@ export default function CashierPage({ navigate }) {
         checkOut: checkOutDate,
         nights,
         roomPrice: rm.price,
+        nightlyRates: rmQuote?.hasAdjustment ? rmQuote.nightly.map(n => ({ date: n.date, price: n.price, plan: n.plan?.name || null })) : undefined,
         discount: rmDiscount,
         totalAmount: rmNet,
         deposit: rmDeposit,
@@ -909,12 +910,7 @@ export default function CashierPage({ navigate }) {
                       <button
                         type="button"
                         className="btn btn-danger btn-sm"
-                        onClick={() => {
-                          if (window.confirm(L(`ຍົກເລີກການຈອງ ${selectedBooking.id}?`, `Cancel booking ${selectedBooking.id}?`))) {
-                            cancelBooking(selectedBooking.id, L('ຍົກເລີກຈາກໜ້າແຄັດເຊຍ', 'Cancelled at cashier'));
-                            toast(L('ຍົກເລີກການຈອງແລ້ວ', 'Booking cancelled'), 'info');
-                          }
-                        }}
+                        onClick={() => setCancelTargetBooking(selectedBooking)}
                       >
                         ✕ {L('ຍົກເລີກ', 'Cancel')}
                       </button>
@@ -1558,6 +1554,20 @@ export default function CashierPage({ navigate }) {
           room={regTarget.room}
           onClose={() => setRegTarget(null)}
           onBack={() => setRegTarget(null)}
+        />
+      )}
+
+      {cancelTargetBooking && (
+        <CancelBookingModal
+          booking={cancelTargetBooking}
+          mode="cancel"
+          defaultReason={L('ຍົກເລີກຈາກໜ້າແຄັດເຊຍ', 'Cancelled at cashier')}
+          onClose={() => setCancelTargetBooking(null)}
+          onDone={() => {
+            setCancelTargetBooking(null);
+            setSelectedRoomId(null);
+            toast(L('ຍົກເລີກການຈອງສຳເລັດ', 'Booking cancelled'), 'info');
+          }}
         />
       )}
 

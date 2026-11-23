@@ -1,16 +1,115 @@
-# React + Vite
+# 🏨 ລະບົບບໍລິຫານຣີສອດຕາດຟານ (Tad Fane Resort Management System)
 
-This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
+ລະບົບຄົບວົງຈອນສຳລັບຣີສອດຕາດຟານ: ຈອງຫ້ອງ, Check-in / Check-out ພ້ອມເຊັນຊື່ເທິງ iPad/ມືຖື, ແຄັດເຊຍຂາຍຫ້ອງ & ພິມໃບບິນ, ປິດກະປະຈຳວັນ, ຂາຍປີ້ກິດຈະກຳ, ວຽກແມ່ບ້ານ & ແຈ້ງສ້ອມແປງ, ບັນທຶກລາຍຈ່າຍ, ລາຍງານກຳໄລສຸດທິ, ລາຄາຫ້ອງຕາມລະດູການ/ທ້າຍອາທິດ, ສຳຮອງຂໍ້ມູນອັດຕະໂນມັດ ແລະ ແຈ້ງເຕືອນຜ່ານ Telegram.
 
-Currently, two official plugins are available:
+---
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## 🚀 ວິທີເປີດໃຊ້ງານ (Quick Start)
 
-## React Compiler
+### 1. ເປີດໃຊ້ງານທັນທີ (Production Mode — ແນະນຳ)
+```bash
+npm start
+```
+*ຄຳສັ່ງນີ້ຈະ build ໄຟລ໌ໜ້າເວັບ ແລະ ເປີດ Server ຂຶ້ນທີ່ Port `8080` ທັນທີ.*
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+### 2. ເປີດສຳລັບພັດທະນາລະບົບ (Development Mode)
+```bash
+# ເປີດ Server (Terminal ທີ 1)
+npm run server
 
-## Expanding the Oxlint configuration
+# ເປີດ Vite Dev Server (Terminal ທີ 2)
+npm run dev
+```
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+---
+
+## 📱 ການເຊື່ອມຕໍ່ໃນເຄືອຂ່າຍ Wi-Fi (ຄອມເຄົາເຕີ, iPad, ມືຖື)
+
+ເມື່ອເປີດ server ແລ້ວ ລະບົບຈະສະແດງ IP ຂອງເຄື່ອງໃນ Wi-Fi ເຊັ່ນ:
+- **ເຄື່ອງ Server ເອງ:** `http://localhost:8080`
+- **ຄອມພິວເຕີ / iPad / ມືຖືໃນ Wi-Fi ດຽວກັນ:** `http://192.168.x.x:8080`
+- **ໜ້າສຳລັບລູກຄ້າເບິ່ງຫ້ອງ & ຈອງອອນລາຍ:** `http://192.168.x.x:8080/?guest=true`
+
+---
+
+## 🔑 ບັນຊີຜູ້ໃຊ້ງານ ແລະ ຄວາມປອດໄພ
+
+- **ຕັ້ງຄ່າຄັ້ງທຳອິດ:** ເມື່ອເປີດໃຊ້ງານຄັ້ງທຳອິດ ລະບົບຈະໃຫ້ສ້າງບັນຊີເຈົ້າຂອງ (Owner) ພ້ອມລະຫັດຜ່ານທີ່ປອດໄພ (ຢ່າງໜ້ອຍ 8 ຕົວອັກສອນ, ມີທັງຕົວອັກສອນ ແລະ ຕົວເລກ).
+- **ການນຳເຂົ້າຂໍ້ມູນເກົ່າ:** ຖ້າເຄີຍໃຊ້ງານໃນ Browser ນີ້ມາກ່ອນ ລະບົບຈະກວດພົບຂໍ້ມູນອັດຕະໂນມັດ ແລະ ມີປຸ່ມໃຫ້ນຳເຂົ້າທັງໝົດໄດ້ໃນ 1 ຄລິກ.
+- **ການເພີ່ມພະນັກງານ:** ເຈົ້າຂອງສາມາດເພີ່ມບັນຊີພະນັກງານຕ້ອນຮັບ (Reception) ແລະ ແມ່ບ້ານ (Housekeeping) ໄດ້ທີ່ *ຕັ້ງຄ່າ → ຈັດການຜູ້ໃຊ້*.
+- **ກໍລະນີເຈົ້າຂອງລືມລະຫັດຜ່ານ:** ສາມາດຣີເຊັດໄດ້ຜ່ານ Terminal ຂອງເຄື່ອງ server ເທົ່ານັ້ນ:
+  ```bash
+  # 1. ປິດ server ກ່ອນ (Ctrl + C)
+  # 2. ຣີເຊັດລະຫັດ
+  npm run reset-password -- admin
+  # 3. ເປີດ server ຄືນ
+  npm start
+  ```
+
+---
+
+## 🌟 ຟີເຈີຫຼັກຂອງລະບົບ (Features)
+
+### 1. 🛏️ ການຈອງ & Check-in / Check-out
+- ຕາຕະລາງຫ້ອງພັກ 24 ຫ້ອງ (ຊັ້ນ 1–4) ສະແດງສະຖານະຕາມເວລາຈິງ (ວ່າງ, ຈອງ, ກຳລັງພັກ, ລໍອະນາໄມ, ປິດສ້ອມ).
+- Check-in ພ້ອມລົງທະບຽນ ແລະ ເຊັນຊື່ເທິງ iPad/ມືຖື ພ້ອມບັນທຶກຮູບພາບລາຍເຊັນ.
+- Check-out ຄິດໄລ່ຄ່າໃຊ້ຈ່າຍເພີ່ມ (Incidental charges), ຫັກເງິນມັດຈຳອັດຕະໂນມັດ, ແລະ ພິມໃບບິນ.
+- ຍົກເລີກການຈອງ ພ້ອມລະບົບຄືນເງິນມັດຈຳ (Refund) ເຕັມຈຳນວນ ຫຼື ບາງສ່ວນ.
+
+### 2. 🧾 ແຄັດເຊຍ (POS) & ປິດກະປະຈຳວັນ (Shift Close)
+- ຂາຍຫ້ອງ Walk-in, ຮັບເງິນມັດຈຳ, ຄິດໄລ່ເງິນທອນ.
+- ປິດກະແຄັດເຊຍ: ກວດນັບເງິນສົດຕົວຈິງທຽບກັບຍອດໃນລະບົບ, ຄິດໄລ່ຜົນຕ່າງ (Discrepancy) ແລະ ບັນທຶກປະຫວັດທີ່ແບ່ງປັນທຸກເຄື່ອງ.
+
+### 3. 📅 ລາຄາຫ້ອງຕາມລະດູການ / ທ້າຍອາທິດ (Rate Plans)
+- ຕັ້ງລາຄາພິເສດສຳລັບວັນສຸກ-ເສົາ (ເຊັ່ນ: +20%).
+- ຕັ້ງລາຄາຕາມຊ່ວງວັນທີ High Season / ວັນບຸນປະເພນີ.
+- ກຳນົດການປັບລາຄາເປັນ ເປີເຊັນ (%), ຈຳນວນເງິນບວກ/ລົບ (₭), ຫຼື ລາຄາຄົງທີ່.
+- ມີລະບົບ Live Preview ທົດລອງຄຳນວນລາຄາກ່ອນບັນທຶກ.
+
+### 4. 🧹 ລະບົບແມ່ບ້ານ & ສ້ອມແປງ (Housekeeping & Maintenance)
+- ໜ້າຕາອອກແບບໃຫ້ໃຊ້ງານງ່າຍເທິງມືຖື/ແທັບເລັດສຳລັບແມ່ບ້ານ.
+- ປຸ່ມກົດ "✅ ອະນາໄມແລ້ວ" ປ່ຽນສະຖານະຫ້ອງເປັນວ່າງທັນທີ.
+- ແຈ້ງບັນຫາອຸປະກອນເປ່ເພ ພ້ອມລະດັບຄວາມດ່ວນ ແລະ ຕົວເລືອກປິດຫ້ອງ (Maintenance).
+- ບັນທຶກການສ້ອມແປງສຳເລັດ ພ້ອມຄ່າໃຊ້ຈ່າຍ (ເຊື່ອມເຂົ້າຕາຕະລາງລາຍຈ່າຍອັດຕະໂນມັດ).
+
+### 5. 📉 ບັນທຶກລາຍຈ່າຍ (Expenses)
+- ບັນທຶກຄ່າໃຊ້ຈ່າຍແຍກຕາມ 9 ໝວດໝູ່ (ສ້ອມແປງ, ຄ່ານ້ຳ-ຄ່າໄຟ, ເງິນເດືອນ, ເຄື່ອງໃຊ້, ວັດຖຸດິບອາຫານ, ຊັກລີດ, ການຕະຫຼາດ, ພາສີ, ອື່ນໆ).
+- Export ລາຍຈ່າຍເປັນໄຟລ໌ Excel / CSV ໄດ້ທຸກຊ່ວງເວລາ.
+
+### 6. 📊 ລາຍງານລາຍຮັບ & ກຳໄລສຸດທິ (Reports & Analytics)
+- ລາຍຮັບຕາມວັນທີ່ຮັບເງິນຕົວຈິງ (Cash-in-flow based on payment ledger).
+- ສະຫຼຸບ: ລາຍຮັບລວມ, ລາຍຈ່າຍລວມ, ກຳໄລສຸດທິ (Net Profit), ເງິນຄືນລູກຄ້າ, ແລະ ອັດຕາການພັກ (Occupancy Rate).
+- ກຣາຟລາຍຮັບປະຈຳວັນ 30 ວັນ ແລະ ສັດສ່ວນລາຍຮັບແຍກຕາມປະເພດຫ້ອງ.
+- Export ຂໍ້ມູນ Bookings, Activities, Expenses ເປັນ Excel/CSV.
+
+### 7. 💾 ສຳຮອງ & ກູ້ຄືນຂໍ້ມູນ (Backup & Restore)
+- ດາວໂຫຼດໄຟລ໌ສຳຮອງຖານຂໍ້ມູນທັງໝົດເປັນ <code>.json</code> ໄດ້ທຸກເວລາ.
+- ກູ້ຄືນຂໍ້ມູນຈາກໄຟລ໌ສຳຮອງ ພ້ອມລະບົບຢືນຢັນຄວາມປອດໄພ.
+- Server ສຳຮອງຂໍ້ມູນອັດຕະໂນມັດທຸກວັນ ແລະ ເກັບຮັກສາ 30 ວັນຫຼ້າສຸດໄວ້ທີ່ <code>server/data/backups/</code>.
+
+### 8. 🔔 ການແຈ້ງເຕືອນ (Notifications)
+- ເຊື່ອມຕໍ່ Telegram Bot ແຈ້ງເຕືອນເຂົ້າກຸ່ມ ຫຼື ສ່ວນຕົວທັນທີເມື່ອມີການຈອງຫ້ອງ ຫຼື ຈອງກິດຈະກຳໃໝ່.
+- ແຈ້ງເຕືອນພາຍໃນແອັບ: ມີສຽງ Chime ແລະ Popup ແຈ້ງເຕືອນທັນທີເມື່ອມີການຈອງອອນລາຍເຂົ້າມາ.
+
+---
+
+## 🛠️ ເຕັກໂນໂລຊີທີ່ໃຊ້ (Tech Stack)
+
+- **Frontend:** React 19, Vite, Chart.js, React-ChartJS-2, CSS3 (Custom Responsive Design)
+- **Backend:** Node.js (Zero external dependencies — ໃຊ້ built-in modules `node:http`, `node:crypto`, `node:fs`)
+- **Database:** Server JSON Document Store ພ້ອມ Atomic Write + Daily Auto-backup
+- **Real-time Sync:** Server-Sent Events (SSE) + Outbox Queue (Offline-tolerant)
+- **Security:** PBKDF2-SHA256 Password Hashing, Session Token Rotation, Rate Limiting, Brute-force Lockout
+
+---
+
+## 🧪 ການທົດສອບລະບົບ (Automated Tests)
+
+```bash
+npm test
+```
+*ແລ່ນ integration tests ຂອງ server (ກວດສອບ Authentication, Authorization, Public Bookings, Rate plans, Lockout, Backup/Restore).*
+
+---
+
+© 2026 ຣີສອດຕາດຟານ (Tad Fane Resort) — ສະຫງວນລິຂະສິດ

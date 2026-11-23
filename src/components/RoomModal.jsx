@@ -10,6 +10,9 @@ import BookingForm from './BookingForm';
 import CheckInModal from './CheckInModal';
 import CheckOutModal from './CheckOutModal';
 import CheckInRegistrationModal from './CheckInRegistrationModal';
+import CancelBookingModal from './CancelBookingModal';
+
+const REFUND_METHOD_LABELS = { cash: 'ເງິນສົດ', transfer: 'ໂອນ', qr: 'QR', card: 'ບັດ' };
 
 const STATUS_DISPLAY_MAP = {
   available: { label: 'ຫ້ອງວ່າງ', emoji: '🟢', badgeClass: 'badge-available', color: '#22c55e' },
@@ -23,7 +26,7 @@ const STATUS_DISPLAY_MAP = {
 export default function RoomModal({ room, selectedDate, initialView = 'detail', onClose }) {
   const {
     bookings, getRoomStatusOnDate,
-    cancelBooking, markNoShow, confirmBooking, rejectBooking,
+    markNoShow, confirmBooking,
     markClean, setRoomStatus
   } = useHotel();
   const { currentUser } = useAuth();
@@ -31,6 +34,7 @@ export default function RoomModal({ room, selectedDate, initialView = 'detail', 
 
   const [view, setView] = useState(initialView); // detail | booking | quick_pay | edit | checkin | checkout | registration
   const [imgIndex, setImgIndex] = useState(0);
+  const [cancelTarget, setCancelTarget] = useState(null); // { booking, mode: 'cancel' | 'reject' }
 
   const today = todayStr();
   const targetDate = selectedDate || today;
@@ -45,6 +49,15 @@ export default function RoomModal({ room, selectedDate, initialView = 'detail', 
       b.checkIn > targetDate
     )
     .sort((a, b) => a.checkIn.localeCompare(b.checkIn));
+
+  // Cancelled bookings of this room that covered targetDate (to show refund info)
+  const cancelledOnDate = bookings
+    .filter(b =>
+      b.roomId === room.id &&
+      b.status === 'cancelled' &&
+      b.checkIn <= targetDate && targetDate < b.checkOut
+    )
+    .slice(0, 3);
 
   const isOwnerOrReception = ['owner', 'reception'].includes(currentUser?.role);
   const isHousekeeping = currentUser?.role === 'housekeeping';
@@ -77,12 +90,7 @@ export default function RoomModal({ room, selectedDate, initialView = 'detail', 
 
   const handleRejectPending = () => {
     if (!activeBooking) return;
-    const reason = window.prompt('ເຫດຜົນໃນການປະຕິເສດ:', 'ຫ້ອງບໍ່ວ່າງ / ບໍ່ພົບຫຼັກຖານໂອນເງິນ');
-    if (reason !== null) {
-      rejectBooking(activeBooking.id, reason);
-      toast(`🚫 ປະຕິເສດການຈອງ ${activeBooking.id}`, 'info');
-      onClose();
-    }
+    setCancelTarget({ booking: activeBooking, mode: 'reject' });
   };
 
   const handleNoShow = () => {
@@ -96,13 +104,33 @@ export default function RoomModal({ room, selectedDate, initialView = 'detail', 
 
   const handleCancelBooking = () => {
     if (!activeBooking) return;
-    const reason = window.prompt('ເຫດຜົນໃນການຍົກເລີກ:', 'ຍົກເລີກຈາກໜ້າຫ້ອງ');
-    if (reason !== null) {
-      cancelBooking(activeBooking.id, reason);
-      toast('ຍົກເລີກການຈອງສຳເລັດ! 🚫', 'info');
-      onClose();
-    }
+    setCancelTarget({ booking: activeBooking, mode: 'cancel' });
   };
+
+  const handleCancelDone = ({ refundAmount } = {}) => {
+    const t = cancelTarget;
+    if (!t) return;
+    const refundText = refundAmount > 0 ? ` · ຄືນເງິນ ${formatCurrency(refundAmount)}` : '';
+    toast(
+      t.mode === 'reject'
+        ? `🚫 ປະຕິເສດການຈອງ ${t.booking.id}${refundText}`
+        : `ຍົກເລີກການຈອງ ${t.booking.id} ສຳເລັດ! 🚫${refundText}`,
+      'info'
+    );
+    onClose();
+  };
+
+  if (cancelTarget) {
+    return (
+      <CancelBookingModal
+        booking={cancelTarget.booking}
+        mode={cancelTarget.mode}
+        defaultReason={cancelTarget.mode === 'reject' ? 'ຫ້ອງບໍ່ວ່າງ / ບໍ່ພົບຫຼັກຖານໂອນເງິນ' : 'ຍົກເລີກຈາກໜ້າຫ້ອງ'}
+        onClose={() => setCancelTarget(null)}
+        onDone={handleCancelDone}
+      />
+    );
+  }
 
   if (view === 'booking' || view === 'quick_pay' || view === 'edit') {
     return (
@@ -351,6 +379,26 @@ export default function RoomModal({ room, selectedDate, initialView = 'detail', 
               </>
             )}
           </div>
+
+          {/* Cancelled bookings on this date (with refund info) */}
+          {cancelledOnDate.length > 0 && (
+            <div style={{
+              background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 'var(--radius)',
+              padding: '10px 12px', marginBottom: '14px', fontSize: '0.78rem'
+            }}>
+              <div style={{ fontWeight: 700, color: '#b91c1c', marginBottom: '4px' }}>❌ ການຈອງທີ່ຍົກເລີກ (ວັນທີນີ້)</div>
+              {cancelledOnDate.map(cb => (
+                <div key={cb.id} style={{ color: 'var(--text-secondary)' }}>
+                  • {cb.guestName} ({cb.id}){cb.cancelReason ? ` — ${cb.cancelReason}` : ''}
+                  {Number(cb.refundAmount) > 0 && (
+                    <span style={{ marginLeft: 6, color: '#b45309', fontWeight: 700 }}>
+                      💸 ຄືນເງິນ {formatCurrency(cb.refundAmount)} ({REFUND_METHOD_LABELS[cb.refundMethod] || cb.refundMethod || 'ເງິນສົດ'})
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
 
           {/* Upcoming Bookings Notice */}
           {upcomingBookings.length > 0 && (

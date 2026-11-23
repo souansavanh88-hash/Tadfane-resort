@@ -1,12 +1,24 @@
 import { useState, useMemo } from 'react';
 import { useHotel } from '../context/HotelContext';
 import { useAuth } from '../context/AuthContext';
-import { formatCurrency, formatDateTime, formatDate, todayStr } from '../data/initialData';
+import { formatCurrency, formatDateTime, formatDate, todayStr, toLocalDateStr } from '../data/initialData';
 import { useToast } from './ToastProvider';
+
+/** ວັນທີທ້ອງຖິ່ນ 'YYYY-MM-DD' ຂອງ ISO timestamp (ຫຼື ວັນທີທີ່ເປັນ 'YYYY-MM-DD' ຢູ່ແລ້ວ) */
+const localDayOf = (v) => {
+  if (!v) return '';
+  if (/^\d{4}-\d{2}-\d{2}$/.test(v)) return v;
+  return toLocalDateStr(v);
+};
+
+const normMethod = (m) => {
+  const k = String(m || 'cash').toLowerCase();
+  return ['cash', 'transfer', 'qr', 'card'].includes(k) ? k : 'cash';
+};
 
 export default function CashierShiftCloseModal({ onClose, viewDate, onShiftClosed }) {
   const { toast } = useToast();
-  const { bookings = [], activitySales = [], hotelInfo, lang } = useHotel();
+  const { bookings = [], activitySales = [], hotelInfo, shiftCloses = [], addShiftClose, getBookingPayments } = useHotel();
   const { currentUser } = useAuth();
   const targetDate = viewDate || todayStr();
 
@@ -14,86 +26,75 @@ export default function CashierShiftCloseModal({ onClose, viewDate, onShiftClose
   const [openingFloat, setOpeningFloat] = useState(0); // ເງິນທອນຕອນເປີດກະ
   const [countedCash, setCountedCash] = useState(''); // ເງິນສົດຕົວຈິງໃນລິ້ນຊັກ
   const [notes, setNotes] = useState('');
-  const [savedRecords, setSavedRecords] = useState(() => {
-    try {
-      const stored = localStorage.getItem('tadfane_shift_closes');
-      return stored ? JSON.parse(stored) : [];
-    } catch {
-      return [];
-    }
-  });
+  // ປະຫວັດການປິດກະ (ແບ່ງປັນທຸກເຄື່ອງຜ່ານ server)
+  const savedRecords = useMemo(
+    () => [...shiftCloses].sort((a, b) => String(b.closedAt || '').localeCompare(String(a.closedAt || ''))),
+    [shiftCloses]
+  );
   const [isClosedSuccess, setIsClosedSuccess] = useState(false);
 
-  // Filter bookings and activities for target date
+  // ສະຫຼຸບເງິນທີ່ຮັບແທ້ໃນວັນທີ targetDate (ຕາມ payment ledger)
   const summary = useMemo(() => {
-    // Bookings that were active, checked-in, or created on target date
-    const dayBookings = bookings.filter(b => {
-      if (['cancelled', 'no_show'].includes(b.status)) return false;
-      const createdDate = (b.createdAt || '').slice(0, 10);
-      const checkInDate = (b.checkedInAt || b.checkIn || '').slice(0, 10);
-      const checkOutDate = (b.checkedOutAt || b.checkOut || '').slice(0, 10);
-      return createdDate === targetDate || checkInDate === targetDate || (b.status === 'checked_in' && checkInDate <= targetDate && checkOutDate >= targetDate);
+    const totals = { cash: 0, transfer: 0, qr: 0, card: 0 };
+    let refundTotal = 0;
+    let roomTotal = 0;
+
+    // ຫ້ອງພັກ: ທຸກການຮັບ/ຄືນເງິນທີ່ເກີດຂຶ້ນໃນວັນນີ້ (ລວມທັງການຈອງທີ່ຍົກເລີກແລ້ວ ແຕ່ມີການຄືນເງິນ)
+    const dayBookings = [];
+    bookings.forEach(b => {
+      const pays = (getBookingPayments ? getBookingPayments(b) : (b.payments || []))
+        .filter(p => p && p.at && localDayOf(p.at) === targetDate);
+      if (!pays.length) return;
+      let dayPaid = 0;
+      let dayRefund = 0;
+      const methods = [];
+      pays.forEach(p => {
+        const amt = Number(p.amount || 0);
+        const m = normMethod(p.method);
+        totals[m] += amt;
+        dayPaid += amt;
+        if (amt < 0) dayRefund += -amt;
+        if (!methods.includes(m)) methods.push(m);
+      });
+      refundTotal += dayRefund;
+      roomTotal += dayPaid;
+      dayBookings.push({ ...b, dayPaid, dayRefund, dayMethods: methods });
     });
 
-    // Breakdown by payment method
-    let cashTotal = 0;
-    let transferTotal = 0;
-    let qrTotal = 0;
-    let cardTotal = 0;
-    let grandTotal = 0;
-
-    dayBookings.forEach(b => {
-      const amt = (b.finalTotal !== undefined && b.finalTotal !== null)
-        ? Number(b.finalTotal)
-        : (Number(b.totalAmount || 0) + (b.extraCharges || []).reduce((s, e) => s + Number(e.amount || 0), 0));
-
-      const method = (b.finalPaymentMethod || b.remainingPaymentMethod || b.paymentMethod || 'cash').toLowerCase();
-      grandTotal += amt;
-
-      if (method === 'cash') cashTotal += amt;
-      else if (method === 'transfer') transferTotal += amt;
-      else if (method === 'qr') qrTotal += amt;
-      else if (method === 'card') cardTotal += amt;
-      else cashTotal += amt;
-    });
-
-    // Activities for target date
+    // ກິດຈະກຳ (ຂາຍແຍກ) ທີ່ຮັບເງິນໃນວັນນີ້
     const dayActs = activitySales.filter(s => {
-      if (s.status === 'cancelled') return false;
+      if (s.status && s.status !== 'paid') return false;
       if (s.chargeToBookingId) return false; // charged to room already
-      const ref = (s.createdAt || s.date || '').slice(0, 10);
-      return ref === targetDate;
+      return localDayOf(s.paidAt || s.createdAt || s.date) === targetDate;
     });
 
     let actTotal = 0;
     dayActs.forEach(a => {
       const amt = Number(a.totalAmount || 0);
       actTotal += amt;
-      grandTotal += amt;
-      const method = (a.paymentMethod || 'cash').toLowerCase();
-      if (method === 'cash') cashTotal += amt;
-      else if (method === 'transfer') transferTotal += amt;
-      else if (method === 'qr') qrTotal += amt;
-      else if (method === 'card') cardTotal += amt;
-      else cashTotal += amt;
+      totals[normMethod(a.paymentMethod)] += amt;
     });
 
-    const expectedCashInDrawer = Number(openingFloat || 0) + cashTotal;
+    const grandTotal = roomTotal + actTotal;
+    const expectedCashInDrawer = Number(openingFloat || 0) + totals.cash;
 
     return {
       billCount: dayBookings.length + dayActs.length,
       roomBookingsCount: dayBookings.length,
       actSalesCount: dayActs.length,
       grandTotal,
-      cashTotal,
-      transferTotal,
-      qrTotal,
-      cardTotal,
+      roomTotal,
+      actTotal,
+      refundTotal,
+      cashTotal: totals.cash,
+      transferTotal: totals.transfer,
+      qrTotal: totals.qr,
+      cardTotal: totals.card,
       expectedCashInDrawer,
       dayBookings,
       dayActs,
     };
-  }, [bookings, activitySales, targetDate, openingFloat]);
+  }, [bookings, activitySales, targetDate, openingFloat, getBookingPayments]);
 
   const countedCashNum = countedCash === '' ? summary.expectedCashInDrawer : Number(countedCash);
   const diff = countedCashNum - summary.expectedCashInDrawer;
@@ -105,8 +106,9 @@ export default function CashierShiftCloseModal({ onClose, viewDate, onShiftClose
       closedAt: new Date().toISOString(),
       closedBy: currentUser?.name || 'Cashier',
       openingFloat: Number(openingFloat || 0),
-      roomTotal: summary.grandTotal - (summary.dayActs.reduce((s, a) => s + Number(a.totalAmount || 0), 0)),
-      actTotal: summary.dayActs.reduce((s, a) => s + Number(a.totalAmount || 0), 0),
+      roomTotal: summary.roomTotal,
+      actTotal: summary.actTotal,
+      refundTotal: summary.refundTotal,
       grandTotal: summary.grandTotal,
       cashTotal: summary.cashTotal,
       transferTotal: summary.transferTotal,
@@ -118,18 +120,12 @@ export default function CashierShiftCloseModal({ onClose, viewDate, onShiftClose
       notes,
     };
 
-    const updated = [record, ...savedRecords];
-    setSavedRecords(updated);
-    try {
-      localStorage.setItem('tadfane_shift_closes', JSON.stringify(updated));
-    } catch {
-      // ignore
-    }
+    const saved = addShiftClose ? addShiftClose(record) : record;
     if (onShiftClosed) {
-      onShiftClosed(record);
+      onShiftClosed(saved);
     }
     toast('✅ ປິດກະ ແລະ ບັນທຶກຍອດເງິນປະຈຳວັນສຳເລັດແລ້ວ!', 'success');
-    setIsClosedSuccess(record);
+    setIsClosedSuccess(saved);
   };
 
   const handlePrint = () => {
@@ -335,6 +331,16 @@ export default function CashierShiftCloseModal({ onClose, viewDate, onShiftClose
                 </div>
                 <div style={{ fontSize: '0.7rem', color: '#6b21a8' }}>EDC Terminal</div>
               </div>
+
+              {summary.refundTotal > 0 && (
+                <div style={{ background: '#fef2f2', border: '1px solid #fecaca', padding: '10px 14px', borderRadius: '8px' }}>
+                  <div style={{ fontSize: '0.74rem', color: '#991b1b' }}>↩️ ຄືນເງິນລູກຄ້າ (Refunds)</div>
+                  <div style={{ fontSize: '1.2rem', fontWeight: 800, color: '#b91c1c', marginTop: '2px' }}>
+                    − {formatCurrency(summary.refundTotal)}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: '#991b1b' }}>ຫັກອອກຈາກຍອດຮັບແລ້ວ</div>
+                </div>
+              )}
             </div>
 
             {/* Shift Cash Balancing Calculator Table */}
@@ -457,10 +463,8 @@ export default function CashierShiftCloseModal({ onClose, viewDate, onShiftClose
                 </thead>
                 <tbody>
                   {summary.dayBookings.map((b, idx) => {
-                    const amt = (b.finalTotal !== undefined && b.finalTotal !== null)
-                      ? Number(b.finalTotal)
-                      : (Number(b.totalAmount || 0) + (b.extraCharges || []).reduce((s, e) => s + Number(e.amount || 0), 0));
-                    const method = (b.finalPaymentMethod || b.remainingPaymentMethod || b.paymentMethod || 'cash').toLowerCase();
+                    const amt = b.dayPaid;
+                    const methods = b.dayMethods && b.dayMethods.length ? b.dayMethods : ['cash'];
                     return (
                       <tr key={b.id} style={{ borderBottom: '1px solid #e2e8f0', background: idx % 2 === 0 ? '#fff' : '#fafaf9' }}>
                         <td style={{ padding: '8px 10px', color: 'var(--text-muted)' }}>{idx + 1}</td>
@@ -479,20 +483,28 @@ export default function CashierShiftCloseModal({ onClose, viewDate, onShiftClose
                         <td style={{ padding: '8px 10px', textAlign: 'center', fontSize: '0.75rem' }}>
                           <div>{b.checkIn} ຫາ {b.checkOut}</div>
                           <div style={{ color: 'var(--text-muted)', fontSize: '0.7rem' }}>
-                            ({b.status === 'checked_in' ? 'ກຳລັງພັກ' : b.status === 'checked_out' ? 'ອອກແລ້ວ' : 'ຈອງແລ້ວ'})
+                            ({b.status === 'checked_in' ? 'ກຳລັງພັກ' : b.status === 'checked_out' ? 'ອອກແລ້ວ' : b.status === 'cancelled' ? 'ຍົກເລີກ' : b.status === 'no_show' ? 'No-Show' : 'ຈອງແລ້ວ'})
                           </div>
                         </td>
                         <td style={{ padding: '8px 10px', textAlign: 'center' }}>
-                          <span style={{
-                            padding: '3px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 700,
-                            background: method === 'cash' ? '#dcfce7' : method === 'transfer' ? '#dbeafe' : method === 'qr' ? '#fef3c7' : '#f3e8ff',
-                            color: method === 'cash' ? '#166534' : method === 'transfer' ? '#1e40af' : method === 'qr' ? '#92400e' : '#6b21a8'
-                          }}>
-                            {method === 'cash' ? '💵 ເງິນສົດ' : method === 'transfer' ? '📲 ເງິນໂອນ' : method === 'qr' ? '📱 QR Code' : '💳 ບັດ'}
-                          </span>
+                          {methods.map(method => (
+                            <span key={method} style={{
+                              display: 'inline-block', margin: '1px 2px',
+                              padding: '3px 8px', borderRadius: '4px', fontSize: '0.72rem', fontWeight: 700,
+                              background: method === 'cash' ? '#dcfce7' : method === 'transfer' ? '#dbeafe' : method === 'qr' ? '#fef3c7' : '#f3e8ff',
+                              color: method === 'cash' ? '#166534' : method === 'transfer' ? '#1e40af' : method === 'qr' ? '#92400e' : '#6b21a8'
+                            }}>
+                              {method === 'cash' ? '💵 ເງິນສົດ' : method === 'transfer' ? '📲 ເງິນໂອນ' : method === 'qr' ? '📱 QR Code' : '💳 ບັດ'}
+                            </span>
+                          ))}
                         </td>
-                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 800, color: 'var(--primary)', fontSize: '0.88rem' }}>
+                        <td style={{ padding: '8px 10px', textAlign: 'right', fontWeight: 800, color: amt < 0 ? '#b91c1c' : 'var(--primary)', fontSize: '0.88rem' }}>
                           {formatCurrency(amt)}
+                          {b.dayRefund > 0 && (
+                            <div style={{ fontSize: '0.7rem', fontWeight: 600, color: '#b91c1c' }}>
+                              (ຄືນເງິນ {formatCurrency(b.dayRefund)})
+                            </div>
+                          )}
                         </td>
                       </tr>
                     );

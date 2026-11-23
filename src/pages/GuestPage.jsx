@@ -1,16 +1,16 @@
 import { useState, useMemo } from 'react';
 import { useHotel } from '../context/HotelContext';
 import { useAuth } from '../context/AuthContext';
-import { ROOM_TYPES, AMENITIES_LIST, formatCurrency, daysBetween, otherServicesList } from '../data/initialData';
+import { ROOM_TYPES, AMENITIES_LIST, formatCurrency, otherServicesList, todayStr, addDays } from '../data/initialData';
 import { TRANSLATIONS, nationalitiesList } from '../data/translations';
 import PrintReceipt from '../components/PrintReceipt';
 
 // ກວດສອບວ່າຫ້ອງວ່າງໃນຊ່ວງວັນທີທີ່ເລືອກ
 function isRoomAvailableForDates(room, bookings, checkIn, checkOut) {
-  if (room.status !== 'available') return false;
+  if (room.status === 'maintenance') return false;
   const conflicts = bookings.filter(b => {
     if (b.roomId !== room.id) return false;
-    if (['cancelled', 'checked_out'].includes(b.status)) return false;
+    if (!['pending', 'booked', 'checked_in'].includes(b.status)) return false;
     return b.checkIn < checkOut && b.checkOut > checkIn;
   });
   return conflicts.length === 0;
@@ -19,7 +19,7 @@ function isRoomAvailableForDates(room, bookings, checkIn, checkOut) {
 // guestActivities are dynamically loaded from HotelContext state
 
 export default function GuestPage({ onGoLogin }) {
-  const { rooms, bookings, createBooking, hotelInfo, setHotelInfo, guestActivities, lang, changeLang: setLang, t } = useHotel();
+  const { rooms, bookings, hotelInfo, setHotelInfo, guestActivities, lang, changeLang: setLang, t } = useHotel();
   const { currentUser } = useAuth();
   const [mainTab, setMainTab] = useState('home'); // home | hotel | activities
   const [isEditingHistory, setIsEditingHistory] = useState(false);
@@ -204,7 +204,6 @@ export default function GuestPage({ onGoLogin }) {
           room={selectedRoom}
           preCheckIn={searchCheckIn}
           preCheckOut={searchCheckOut}
-          createBooking={createBooking}
           onBack={() => setView('browse')}
           onSuccess={(b) => { setBookingResult(b); setView('success'); }}
           t={t}
@@ -1341,9 +1340,12 @@ function GuestRoomCard({ room, isAvailable = true, isDatesSelected = false, t, o
 }
 
 // ======= ROOM BOOKING FORM =======
-function GuestBookingForm({ room, preCheckIn, preCheckOut, createBooking, onBack, onSuccess, t, lang }) {
-  const today = new Date().toISOString().split('T')[0];
-  const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+function GuestBookingForm({ room, preCheckIn, preCheckOut, onBack, onSuccess, t, lang }) {
+  const { submitOnlineBooking, quoteStay, isRoomAvailableForDates: isFree } = useHotel();
+  const today = todayStr();
+  const tomorrow = addDays(today, 1);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
 
   const [form, setForm] = useState({
     guestName: '', guestPhone: '', guestNationality: nationalitiesList[lang]?.[0] || 'ລາວ', guestCount: 1,
@@ -1354,8 +1356,11 @@ function GuestBookingForm({ room, preCheckIn, preCheckOut, createBooking, onBack
   });
   const [errors, setErrors] = useState({});
 
-  const nights = Math.max(1, daysBetween(form.checkIn, form.checkOut));
-  const totalAmount = room.price * nights;
+  const quote = quoteStay(room, form.checkIn, form.checkOut);
+  const nights = Math.max(1, quote.nights);
+  const totalAmount = quote.total;
+  const datesValid = form.checkIn < form.checkOut;
+  const available = datesValid ? isFree(room.id, form.checkIn, form.checkOut) : true;
   const set = (f, v) => setForm(p => ({ ...p, [f]: v }));
 
   const validate = () => {
@@ -1363,28 +1368,31 @@ function GuestBookingForm({ room, preCheckIn, preCheckOut, createBooking, onBack
     if (!form.guestName.trim()) e.guestName = 'Required / ຕ້ອງໃສ່';
     if (!form.guestPhone.trim()) e.guestPhone = 'Required / ຕ້ອງໃສ່';
     if (form.checkIn >= form.checkOut) e.checkOut = t('dateError');
+    else if (!available) e.checkOut = 'ຫ້ອງບໍ່ວ່າງໃນວັນທີນີ້ / Not available for these dates';
     return e;
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     const errs = validate();
-    if (Object.keys(errs).length > 0) { setErrors(errs); return; }
-    const booking = createBooking({
-      ...form,
-      passportNo: form.passportNo.trim().toUpperCase(),
-      roomId: room.id,
-      nights,
-      roomPrice: room.price,
-      totalAmount,
-      remainingAmount: totalAmount,
-      discount: 0,
-      deposit: 0,
-      guestCount: Number(form.guestCount),
-      status: 'pending',
-      bookingChannel: 'online',
-    });
-    onSuccess(booking);
+    setErrors(errs);
+    if (Object.keys(errs).length > 0) return;
+    setSubmitting(true);
+    setSubmitError('');
+    try {
+      const booking = await submitOnlineBooking({
+        ...form,
+        passportNo: form.passportNo.trim().toUpperCase(),
+        roomId: room.id,
+        guestCount: Number(form.guestCount),
+      });
+      onSuccess(booking);
+    } catch (err) {
+      setSubmitError(err.message);
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -1477,15 +1485,30 @@ function GuestBookingForm({ room, preCheckIn, preCheckOut, createBooking, onBack
           </div>
           <div style={{ background: 'var(--bg-elevated)', borderRadius: 'var(--radius)', padding: '12px 16px', marginBottom: '16px' }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.875rem' }}>
-              <span style={{ color: 'var(--text-secondary)' }}>{formatCurrency(room.price)} × {nights} {t('nights')}</span>
+              <span style={{ color: 'var(--text-secondary)' }}>
+                {quote.hasAdjustment ? `${nights} ${t('nights')}` : `${formatCurrency(room.price)} × ${nights} ${t('nights')}`}
+              </span>
               <span style={{ fontWeight: 700, color: 'var(--accent)', fontSize: '1rem' }}>{formatCurrency(totalAmount)}</span>
             </div>
+            {quote.hasAdjustment && (
+              <div style={{ marginTop: '6px', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                {quote.nightly.map(n => (
+                  <div key={n.date} style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{n.date}{n.plan ? ` • ${n.plan.name}` : ''}</span>
+                    <span>{formatCurrency(n.price)}</span>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
           <div className="form-group">
             <label className="form-label">{t('notes')}</label>
             <textarea className="form-textarea" placeholder={t('notes')} value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} />
           </div>
-          <button type="submit" className="btn btn-success btn-lg" style={{ width: '100%', fontWeight: 800 }}>✅ {t('submitBooking')}</button>
+          {submitError && <div className="alert alert-error" style={{ marginBottom: '12px' }}>❌ {submitError}</div>}
+          <button type="submit" className="btn btn-success btn-lg" disabled={submitting || !available} style={{ width: '100%', fontWeight: 800 }}>
+            {submitting ? '⏳ ...' : `✅ ${t('submitBooking')}`}
+          </button>
         </div>
       </form>
     </div>
@@ -1512,32 +1535,35 @@ function ActivityBookingForm({ activity, onBack, onSuccess, t, lang }) {
     return e;
   };
 
-  const handleSubmit = (e) => {
+  const { submitOnlineActivityBooking } = useHotel();
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState('');
+
+  const handleSubmit = async (e) => {
     e.preventDefault();
+    if (submitting) return;
     const errs = validate();
     if (Object.keys(errs).length > 0) { setErrors(errs); return; }
 
-    // Save activity booking to localStorage (simulating database write)
-    const newBooking = {
-      id: `AC-${Date.now()}`,
-      activityId: activity.id,
-      activityLabel: t(activity.id),
-      price: activity.price,
-      quantity: Number(form.quantity),
-      totalAmount,
-      guestName: form.guestName,
-      guestPhone: form.guestPhone,
-      paymentMethod: form.paymentMethod,
-      date: form.date,
-      notes: form.notes,
-      status: 'booked',
-    };
-
-    const saved = localStorage.getItem('activities_sales');
-    const sales = saved ? JSON.parse(saved) : [];
-    localStorage.setItem('activities_sales', JSON.stringify([newBooking, ...sales]));
-
-    onSuccess(newBooking);
+    setSubmitting(true);
+    setSubmitError('');
+    try {
+      const sale = await submitOnlineActivityBooking({
+        activityId: activity.id,
+        activityLabel: t(activity.id),
+        quantity: Number(form.quantity),
+        guestName: form.guestName,
+        guestPhone: form.guestPhone,
+        paymentMethod: form.paymentMethod,
+        date: form.date,
+        notes: form.notes,
+      });
+      onSuccess(sale);
+    } catch (err) {
+      setSubmitError(err.message || 'ເກີດຂໍ້ຜິດພາດ');
+    } finally {
+      setSubmitting(false);
+    }
   };
 
   return (
@@ -1605,7 +1631,10 @@ function ActivityBookingForm({ activity, onBack, onSuccess, t, lang }) {
             <label className="form-label">{t('notes')}</label>
             <textarea className="form-textarea" placeholder={t('notes')} value={form.notes} onChange={e => set('notes', e.target.value)} rows={2} />
           </div>
-          <button type="submit" className="btn btn-success btn-lg" style={{ width: '100%', fontWeight: 800 }}>✅ {t('submitBooking')}</button>
+          {submitError && <div className="alert alert-error" style={{ marginBottom: '12px' }}>❌ {submitError}</div>}
+          <button type="submit" className="btn btn-success btn-lg" disabled={submitting} style={{ width: '100%', fontWeight: 800 }}>
+            {submitting ? '⏳ ...' : `✅ ${t('submitBooking')}`}
+          </button>
         </div>
       </form>
     </div>
@@ -1617,28 +1646,11 @@ function BookingSuccess({ booking, onBack, onGoLogin, t }) {
   const { rooms } = useHotel();
   const room = rooms.find(r => r.id === booking?.roomId);
   const isActivity = booking?.id?.startsWith('AC-');
-  const [payMethod, setPayMethod] = useState('card'); // 'qr' or 'card'
-  const [cardName, setCardName] = useState('');
-  const [cardNumber, setCardNumber] = useState('');
-  const [cardExpiry, setCardExpiry] = useState('');
-  const [cardCvv, setCardCvv] = useState('');
-  const [isProcessing, setIsProcessing] = useState(false);
-  const [isPaid, setIsPaid] = useState(false);
-  const [txnRef, setTxnRef] = useState('');
-
-  const handlePay = (e) => {
-    e.preventDefault();
-    if (!cardName || !cardNumber || !cardExpiry || !cardCvv) {
-      alert('ກະລຸນາປ້ອນຂໍ້ມູນໃຫ້ຄົບຖ້ວນ');
-      return;
-    }
-    setIsProcessing(true);
-    setTimeout(() => {
-      setIsProcessing(false);
-      setIsPaid(true);
-      setTxnRef('TXN-' + Math.floor(Math.random() * 100000000).toString().padStart(8, '0'));
-    }, 2000);
-  };
+  const { hotelInfo } = useHotel();
+  const confirmUrl = !isActivity && booking?.publicToken
+    ? `${window.location.origin}/?booking=${encodeURIComponent(booking.id)}&t=${encodeURIComponent(booking.publicToken)}`
+    : '';
+  const waNumber = (hotelInfo?.whatsapp || '').replace(/[^0-9]/g, '');
 
   return (
     <div style={{ minHeight: '100vh', background: 'var(--bg-base)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '20px' }}>
@@ -1684,35 +1696,10 @@ function BookingSuccess({ booking, onBack, onGoLogin, t }) {
           borderRadius: 'var(--radius-lg)'
         }}>
           <h3 style={{ fontSize: '1.1rem', fontWeight: 800, color: 'var(--text-primary)', marginBottom: '16px', display: 'flex', alignItems: 'center', gap: '8px' }}>
-            💳 ການສຳລະເງິນ (Payment Method)
+            💳 ຊຳລະເງິນມັດຈຳ (ໂອນ / QR)
           </h3>
 
-          <div style={{ display: 'flex', borderBottom: '1px solid var(--border)', marginBottom: '16px', gap: '8px' }}>
-            <button
-              style={{
-                flex: 1, padding: '8px', border: 'none', background: payMethod === 'qr' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                color: payMethod === 'qr' ? 'var(--primary-light)' : 'var(--text-muted)',
-                fontWeight: 700, cursor: 'pointer', borderRadius: '6px 6px 0 0',
-                borderBottom: payMethod === 'qr' ? '2px solid var(--primary)' : 'none', fontSize: '0.85rem'
-              }}
-              onClick={() => setPayMethod('qr')}
-            >
-              📱 ໂອນຜ່ານ QR Code
-            </button>
-            <button
-              style={{
-                flex: 1, padding: '8px', border: 'none', background: payMethod === 'card' ? 'rgba(59, 130, 246, 0.15)' : 'transparent',
-                color: payMethod === 'card' ? 'var(--primary-light)' : 'var(--text-muted)',
-                fontWeight: 700, cursor: 'pointer', borderRadius: '6px 6px 0 0',
-                borderBottom: payMethod === 'card' ? '2px solid var(--primary)' : 'none', fontSize: '0.85rem'
-              }}
-              onClick={() => setPayMethod('card')}
-            >
-              💳 ບັດເຄດິດ (Credit Card)
-            </button>
-          </div>
-          
-          {payMethod === 'qr' ? (
+          {(
             <div style={{ display: 'flex', gap: '16px', alignItems: 'center', flexWrap: 'wrap' }}>
               <div style={{ flex: '1 1 200px' }}>
                 <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
@@ -1754,116 +1741,9 @@ function BookingSuccess({ booking, onBack, onGoLogin, t }) {
                 </span>
               </div>
             </div>
-          ) : (
-            <div>
-              {isPaid ? (
-                <div style={{ textAlign: 'center', padding: '20px 0' }}>
-                  <div style={{ fontSize: '2.5rem', color: 'var(--success)', marginBottom: '10px' }}>🎉</div>
-                  <h4 style={{ color: 'var(--success)', fontWeight: 800, marginBottom: '8px' }}>ຊຳລະເງິນສຳເລັດ! (Paid Successfully)</h4>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '4px' }}>ໝາຍເລກທຸລະກຳ (Transaction Ref):</p>
-                  <p style={{ fontFamily: 'monospace', fontWeight: 700, color: 'var(--text-primary)', fontSize: '1.1rem', background: 'rgba(255,255,255,0.05)', padding: '6px 12px', borderRadius: '6px', display: 'inline-block' }}>{txnRef}</p>
-                </div>
-              ) : (
-                <form onSubmit={handlePay} style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>ຊື່ເທິງບັດ (Cardholder Name)</label>
-                    <input 
-                      type="text" 
-                      placeholder="JOHN DOE"
-                      value={cardName}
-                      onChange={e => setCardName(e.target.value.toUpperCase())}
-                      required
-                      style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontSize: '0.9rem' }}
-                    />
-                  </div>
-                  <div>
-                    <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>ເລກບັດເຄດິດ (Card Number)</label>
-                    <input 
-                      type="text" 
-                      placeholder="4000 1234 5678 9010"
-                      maxLength="19"
-                      value={cardNumber}
-                      onChange={e => {
-                        let v = e.target.value.replace(/\D/g, '');
-                        let matches = v.match(/\d{4,16}/g);
-                        let match = matches && matches[0] || '';
-                        let parts = [];
-                        for (let i=0, len=match.length; i<len; i+=4) {
-                          parts.push(match.substring(i, i+4));
-                        }
-                        if (parts.length > 0) {
-                          setCardNumber(parts.join(' '));
-                        } else {
-                          setCardNumber(v);
-                        }
-                      }}
-                      required
-                      style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontSize: '0.9rem', fontFamily: 'monospace' }}
-                    />
-                  </div>
-                  <div style={{ display: 'flex', gap: '12px' }}>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>ວັນໝົດອາຍຸ (Expiry Date)</label>
-                      <input 
-                        type="text" 
-                        placeholder="MM/YY"
-                        maxLength="5"
-                        value={cardExpiry}
-                        onChange={e => {
-                          let v = e.target.value.replace(/\D/g, '');
-                          if (v.length >= 2) {
-                            setCardExpiry(v.slice(0, 2) + '/' + v.slice(2, 4));
-                          } else {
-                            setCardExpiry(v);
-                          }
-                        }}
-                        required
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontSize: '0.9rem', textAlign: 'center' }}
-                      />
-                    </div>
-                    <div style={{ flex: 1 }}>
-                      <label style={{ fontSize: '0.8rem', color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>CVV</label>
-                      <input 
-                        type="password" 
-                        placeholder="***"
-                        maxLength="3"
-                        value={cardCvv}
-                        onChange={e => setCardCvv(e.target.value.replace(/\D/g, ''))}
-                        required
-                        style={{ width: '100%', padding: '8px 12px', borderRadius: '6px', border: '1px solid var(--border)', background: 'var(--bg-elevated)', color: 'var(--text-primary)', fontSize: '0.9rem', textAlign: 'center' }}
-                      />
-                    </div>
-                  </div>
-                  
-                  <button 
-                    type="submit" 
-                    disabled={isProcessing}
-                    className="btn btn-primary" 
-                    style={{ width: '100%', marginTop: '8px', padding: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '8px', cursor: 'pointer' }}
-                  >
-                    {isProcessing ? (
-                      <>
-                        <span style={{ 
-                          width: '16px', 
-                          height: '16px', 
-                          border: '2px solid #fff', 
-                          borderTop: '2px solid transparent', 
-                          borderRadius: '50%', 
-                          animation: 'spin 1s linear infinite',
-                          display: 'inline-block'
-                        }}></span>
-                        ກຳລັງປະມວນຜົນ...
-                      </>
-                    ) : (
-                      `ຢືນຢันຊຳລະເງິນ (${formatCurrency(booking?.totalAmount)})`
-                    )}
-                  </button>
-                </form>
-              )}
-            </div>
           )}
 
-          {payMethod === 'qr' && (
+          {(
             <div style={{ 
               marginTop: '16px', 
               padding: '10px 12px', 
@@ -1873,7 +1753,25 @@ function BookingSuccess({ booking, onBack, onGoLogin, t }) {
               fontSize: '0.8rem',
               color: 'var(--text-secondary)'
             }}>
-              ⚠️ <strong>ໝາຍເຫດ:</strong> ກະລຸນາສົ່ງໃບບິນການໂອນ (Slip) ໃຫ້ພະນັກງານເພື່ອຢືນຢັນການຈອງ ຫຼັງຈາກການສຳລະເງິນສຳເລັດ.
+              ⚠️ <strong>ໝາຍເຫດ:</strong> ກະລຸນາສົ່ງໃບບິນການໂອນ (Slip) ພ້ອມລະຫັດການຈອງ <strong>{booking?.id}</strong> ໃຫ້ພະນັກງານ ເພື່ອຢືນຢັນການຈອງ.
+              {waNumber && (
+                <div style={{ marginTop: '8px' }}>
+                  <a
+                    className="btn btn-success btn-sm"
+                    href={`https://wa.me/${waNumber.startsWith('0') ? '856' + waNumber.slice(1) : waNumber}?text=${encodeURIComponent(`ສະບາຍດີ, ຂ້ອຍສົ່ງສະລິບການຈອງ ${booking?.id} (${booking?.guestName})`)}`}
+                    target="_blank"
+                    rel="noreferrer"
+                  >
+                    💬 ສົ່ງສະລິບທາງ WhatsApp
+                  </a>
+                </div>
+              )}
+            </div>
+          )}
+          {confirmUrl && (
+            <div style={{ marginTop: '12px', fontSize: '0.82rem' }}>
+              📄 <a href={confirmUrl} style={{ fontWeight: 700 }}>ເປີດໃບຢືນຢັນການຈອງ / ເຊັນຊື່</a>
+              <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>ບັນທຶກລິ້ງນີ້ໄວ້ ເພື່ອກວດສະຖານະການຈອງພາຍຫຼັງ</div>
             </div>
           )}
         </div>

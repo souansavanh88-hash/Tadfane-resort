@@ -2,10 +2,9 @@ import { useState, useMemo } from 'react';
 import {
   generateBookingShareUrl,
   generateBookingShareMessage,
-  DEFAULT_PUBLIC_URL,
-  DEFAULT_LOCAL_IP,
-  DEFAULT_LOCAL_PORT
+  getShareBaseUrl,
 } from '../utils/bookingShare';
+import { getServerLanIps } from '../utils/api';
 import { useToast } from './ToastProvider';
 
 export default function ShareBookingModal({
@@ -28,8 +27,7 @@ export default function ShareBookingModal({
 
   const activeHost = useMemo(() => {
     if (hostMode === 'wifi') {
-      const port = window.location.port || DEFAULT_LOCAL_PORT;
-      return `${window.location.protocol}//${DEFAULT_LOCAL_IP}:${port}`;
+      return getShareBaseUrl();
     }
     if (hostMode === 'current') {
       return window.location.origin;
@@ -327,7 +325,7 @@ export default function ShareBookingModal({
                       checked={hostMode === 'wifi'}
                       onChange={() => setHostMode('wifi')}
                     />
-                    <span>📶 Wi-Fi ຣີສອດ ({DEFAULT_LOCAL_IP})</span>
+                    <span>📶 Wi-Fi ຣີສອດ ({getServerLanIps()[0] || window.location.hostname})</span>
                   </label>
                   <label style={{ display: 'flex', alignItems: 'center', gap: '4px', cursor: 'pointer', fontWeight: hostMode === 'current' ? 700 : 400 }}>
                     <input
