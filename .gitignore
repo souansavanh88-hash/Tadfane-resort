@@ -22,3 +22,6 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Server data (ຂໍ້ມູນຈິງ + backup — ຫ້າມ commit)
+server/data/

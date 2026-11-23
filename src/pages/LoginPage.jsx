@@ -1,27 +1,18 @@
-import { useState, useEffect } from 'react';
-import { useAuth } from '../context/AuthContext';
+import { useState, useMemo } from 'react';
+import { useAuth, getLegacySummary } from '../context/AuthContext';
 import { validatePasswordStrength } from '../utils/security';
 
 export default function LoginPage({ onGuestMode }) {
-  const { login, needsSetup, ready, users, resetPassword, unlockAccount, emergencyLogin } = useAuth();
-  const [form, setForm] = useState({ username: 'admin', password: '' });
+  const { login, needsSetup, ready, serverError, retryConnect } = useAuth();
+  const [form, setForm] = useState({ username: '', password: '' });
   const [error, setError] = useState('');
-  const [successMsg, setSuccessMsg] = useState('');
   const [loading, setLoading] = useState(false);
-  const [showForgotModal, setShowForgotModal] = useState(false);
-
-  // Clear any lockout automatically on mount so user is never blocked
-  useEffect(() => {
-    if (unlockAccount) {
-      unlockAccount();
-    }
-  }, [unlockAccount]);
+  const [showForgot, setShowForgot] = useState(false);
 
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
     setError('');
-    setSuccessMsg('');
     const result = await login(form.username, form.password);
     if (!result.success) {
       setError(result.message);
@@ -45,7 +36,7 @@ export default function LoginPage({ onGuestMode }) {
         pointerEvents: 'none',
       }} />
 
-      <div style={{ width: '100%', maxWidth: '420px', position: 'relative', zIndex: 1 }}>
+      <div style={{ width: '100%', maxWidth: '440px', position: 'relative', zIndex: 1 }}>
         <div style={{ textAlign: 'center', marginBottom: '32px' }}>
           <div style={{
             width: '72px', height: '72px',
@@ -65,7 +56,9 @@ export default function LoginPage({ onGuestMode }) {
         </div>
 
         {!ready ? (
-          <div className="card" style={{ padding: '32px', textAlign: 'center' }}>⏳ ກຳລັງໂຫຼດ...</div>
+          <div className="card" style={{ padding: '32px', textAlign: 'center' }}>⏳ ກຳລັງເຊື່ອມຕໍ່ server...</div>
+        ) : serverError ? (
+          <ServerErrorCard message={serverError} onRetry={retryConnect} />
         ) : needsSetup ? (
           <SetupOwnerCard />
         ) : (
@@ -74,81 +67,8 @@ export default function LoginPage({ onGuestMode }) {
               🔐 ເຂົ້າສູ່ລະບົບ (ສຳລັບພະນັກງານ)
             </h2>
 
-            {/* Emergency 1-Click Login Button */}
-            <div style={{
-              background: '#f0fdf4',
-              border: '2px solid #86efac',
-              borderRadius: 'var(--radius)',
-              padding: '16px',
-              marginBottom: '20px',
-              textAlign: 'center',
-            }}>
-              <div style={{ fontSize: '0.84rem', fontWeight: 700, color: '#166534', marginBottom: '8px' }}>
-                ⚡ ສຳລັບເຈົ້າຂອງຣີສອດ / ຜູ້ຈັດການ:
-              </div>
-              <button
-                type="button"
-                className="btn"
-                style={{
-                  width: '100%',
-                  padding: '12px',
-                  fontSize: '0.98rem',
-                  fontWeight: 800,
-                  background: '#06c755',
-                  color: '#fff',
-                  border: 'none',
-                  borderRadius: '8px',
-                  boxShadow: '0 4px 12px rgba(6, 199, 85, 0.3)',
-                  cursor: 'pointer',
-                }}
-                disabled={loading}
-                onClick={async () => {
-                  setLoading(true);
-                  setError('');
-                  const res = await emergencyLogin();
-                  setLoading(false);
-                  if (!res.success) {
-                    setError(res.message);
-                  }
-                }}
-              >
-                {loading ? '⏳ ກຳລັງເຂົ້າລະບົບ...' : '⚡ ກົດທີ່ນີ້ເພື່ອເຂົ້າສູ່ລະບົບທັນທີ (1-Click)'}
-              </button>
-              <div style={{ fontSize: '0.72rem', color: '#15803d', marginTop: '6px' }}>
-                * ປົດລັອກອັດຕະໂນມັດ ແລະ ພາທ່ານເຂົ້າສູ່ລະບົບທັນທີ ໂດຍບໍ່ຕ້ອງປ້ອນລະຫັດ
-              </div>
-            </div>
-
-            <div style={{ textAlign: 'center', marginBottom: '16px', position: 'relative' }}>
-              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', background: 'var(--bg-card)', padding: '0 10px' }}>
-                — ຫຼື ປ້ອນຊື່ຜູ້ໃຊ້ ແລະ ລະຫັດຜ່ານ —
-              </span>
-            </div>
-
             {error && (
-              <div className="alert alert-error" style={{ marginBottom: '16px' }}>
-                <div style={{ marginBottom: error.includes('ລັອກ') ? '10px' : '0' }}>❌ {error}</div>
-                {error.includes('ລັອກ') && (
-                  <button
-                    type="button"
-                    className="btn btn-warning btn-xs"
-                    style={{ width: '100%', fontWeight: 800, padding: '8px 12px', fontSize: '0.82rem' }}
-                    onClick={() => {
-                      unlockAccount(form.username);
-                      setError('');
-                      setSuccessMsg('✅ ປົດລັອກບັນຊີແລ້ວ! ທ່ານສາມາດກົດປຸ່ມ "ລືມລະຫັດຜ່ານ" ດ້ານລຸ່ມເພື່ອຣີເຊັດລະຫັດໄດ້ເລີຍ.');
-                    }}
-                  >
-                    🔓 ກົດທີ່ນີ້ເພື່ອປົດລັອກບັນຊີທັນທີ
-                  </button>
-                )}
-              </div>
-            )}
-
-            {successMsg && (
-              <div className="alert alert-success" style={{ marginBottom: '16px' }}>
-                {successMsg}
-              </div>
+              <div className="alert alert-error" style={{ marginBottom: '16px' }}>❌ {error}</div>
             )}
 
             <form onSubmit={handleSubmit} autoComplete="on">
@@ -159,6 +79,7 @@ export default function LoginPage({ onGuestMode }) {
                   type="text"
                   name="username"
                   autoComplete="username"
+                  autoCapitalize="none"
                   placeholder="ຊື່ຜູ້ໃຊ້..."
                   value={form.username}
                   onChange={e => setForm(p => ({ ...p, username: e.target.value }))}
@@ -194,39 +115,16 @@ export default function LoginPage({ onGuestMode }) {
               <button
                 type="button"
                 className="btn btn-ghost btn-sm"
-                style={{
-                  fontSize: '0.82rem',
-                  fontWeight: 700,
-                  color: 'var(--primary)',
-                  textDecoration: 'underline',
-                  cursor: 'pointer',
-                  padding: '6px 12px',
-                }}
-                onClick={() => {
-                  setError('');
-                  setShowForgotModal(true);
-                }}
+                style={{ fontSize: '0.82rem', fontWeight: 700, color: 'var(--primary)', textDecoration: 'underline' }}
+                onClick={() => setShowForgot(true)}
               >
-                🔑 ລືມລະຫັດຜ່ານ? ກົດທີ່ນີ້ເພື່ອຣີເຊັດລະຫັດ
+                🔑 ລືມລະຫັດຜ່ານ?
               </button>
             </div>
           </div>
         )}
 
-        {showForgotModal && (
-          <ForgotPasswordModal
-            users={users}
-            initialUsername={form.username}
-            onClose={() => setShowForgotModal(false)}
-            onResetSuccess={(username, newPass) => {
-              setForm({ username, password: newPass });
-              setError('');
-              setSuccessMsg(`✅ ຣີເຊັດລະຫັດສຳເລັດ! ລະຫັດຜ່ານໃໝ່ແມ່ນ: ${newPass} (ລະບົບໄດ້ປ້ອນໃຫ້ແລ້ວ ກົດເຂົ້າລະບົບໄດ້ເລີຍ)`);
-              setShowForgotModal(false);
-            }}
-            resetPassword={resetPassword}
-          />
-        )}
+        {showForgot && <ForgotPasswordInfo onClose={() => setShowForgot(false)} />}
 
         {onGuestMode && (
           <div style={{ marginTop: '16px' }}>
@@ -239,7 +137,7 @@ export default function LoginPage({ onGuestMode }) {
               onClick={onGuestMode}
               type="button"
             >
-              🏨 ເບິ່ງຫ້ອງວ່າງ & ຈອງຫ້ອງ
+              🏨 ເບິ່ງຫ້ອງວ່າງ &amp; ຈອງຫ້ອງ
             </button>
             <p style={{ textAlign: 'center', fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '6px' }}>
               ລູກຄ້າສາມາດເບິ່ງ ແລະ ຈອງຫ້ອງໂດຍບໍ່ຕ້ອງ Login
@@ -248,18 +146,69 @@ export default function LoginPage({ onGuestMode }) {
         )}
 
         <p style={{ textAlign: 'center', marginTop: '16px', fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-          v1.1.0 © 2026 ຣີສອດຕາດຟານ
+          v2.0.0 © 2026 ຣີສອດຕາດຟານ
         </p>
       </div>
     </div>
   );
 }
 
-// ======= ຕັ້ງຄ່າຄັ້ງທຳອິດ: ສ້າງບັນຊີເຈົ້າຂອງ =======
+// ======= ເຊື່ອມຕໍ່ server ບໍ່ໄດ້ =======
+function ServerErrorCard({ message, onRetry }) {
+  return (
+    <div className="card" style={{ padding: '28px' }}>
+      <h2 style={{ fontSize: '1.05rem', fontWeight: 700, marginBottom: '10px', color: 'var(--danger, #dc2626)' }}>
+        📡 ເຊື່ອມຕໍ່ server ບໍ່ໄດ້
+      </h2>
+      <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '14px' }}>{message}</p>
+      <ul style={{ fontSize: '0.8rem', color: 'var(--text-muted)', paddingLeft: '18px', marginBottom: '18px', lineHeight: 1.7 }}>
+        <li>ກວດວ່າເຄື່ອງ server ເປີດຢູ່ ແລະ ແລ່ນຄຳສັ່ງ <code>npm start</code> ແລ້ວ</li>
+        <li>ກວດວ່າເຄື່ອງນີ້ເຊື່ອມ Wi-Fi ດຽວກັນກັບເຄື່ອງ server</li>
+      </ul>
+      <button className="btn btn-primary" style={{ width: '100%' }} onClick={onRetry}>🔄 ລອງໃໝ່</button>
+    </div>
+  );
+}
+
+// ======= ລືມລະຫັດຜ່ານ: ຕ້ອງໃຫ້ເຈົ້າຂອງຣີເຊັດໃຫ້ (ປອດໄພ) =======
+function ForgotPasswordInfo({ onClose }) {
+  return (
+    <div className="modal-overlay" onClick={(e) => e.target === e.currentTarget && onClose()}>
+      <div className="modal" style={{ maxWidth: '480px' }}>
+        <div className="modal-header">
+          <span className="modal-title">🔑 ລືມລະຫັດຜ່ານ</span>
+          <button className="modal-close" onClick={onClose}>✕</button>
+        </div>
+        <div className="modal-body" style={{ fontSize: '0.88rem', lineHeight: 1.7 }}>
+          <p style={{ marginBottom: '12px' }}>
+            <strong>👤 ພະນັກງານ:</strong> ກະລຸນາແຈ້ງເຈົ້າຂອງ ຫຼື ຜູ້ຈັດການ ໃຫ້ຣີເຊັດລະຫັດໃຫ້ ທີ່
+            <em> ຕັ້ງຄ່າ → ຜູ້ໃຊ້ງານ → ແກ້ໄຂ</em>. ເມື່ອເຂົ້າລະບົບຄັ້ງຕໍ່ໄປ ລະບົບຈະໃຫ້ຕັ້ງລະຫັດໃໝ່ເອງ.
+          </p>
+          <p style={{ marginBottom: '8px' }}>
+            <strong>👑 ເຈົ້າຂອງ:</strong> ຣີເຊັດໄດ້ທີ່ເຄື່ອງ server ເທົ່ານັ້ນ (ເພື່ອຄວາມປອດໄພ):
+          </p>
+          <ol style={{ paddingLeft: '20px', marginBottom: '8px' }}>
+            <li>ປິດ server (ກົດ <code>Ctrl + C</code> ໃນໜ້າຕ່າງ Terminal)</li>
+            <li>ພິມ: <code>npm run reset-password -- ຊື່ຜູ້ໃຊ້</code></li>
+            <li>ໃສ່ລະຫັດໃໝ່ ແລ້ວເປີດ server ຄືນ: <code>npm start</code></li>
+          </ol>
+        </div>
+        <div className="modal-footer">
+          <button className="btn btn-primary" onClick={onClose}>ເຂົ້າໃຈແລ້ວ</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ======= ຕັ້ງຄ່າຄັ້ງທຳອິດ: ສ້າງບັນຊີເຈົ້າຂອງ / ນຳເຂົ້າຂໍ້ມູນເກົ່າ =======
 function SetupOwnerCard() {
-  const { setupOwner } = useAuth();
+  const { setupOwner, importLegacyWithAccounts } = useAuth();
+  const legacy = useMemo(() => getLegacySummary(), []);
   const [form, setForm] = useState({ name: '', username: '', phone: '', password: '', confirm: '' });
+  const [importLegacy, setImportLegacy] = useState(legacy.hasData);
   const [error, setError] = useState('');
+  const [info, setInfo] = useState('');
   const [loading, setLoading] = useState(false);
   const set = (k, v) => setForm(p => ({ ...p, [k]: v }));
 
@@ -272,20 +221,49 @@ function SetupOwnerCard() {
     if (pwErr) return setError(pwErr);
     if (form.password !== form.confirm) return setError('ຢືນຢັນລະຫັດຜ່ານບໍ່ກົງກັນ');
     setLoading(true);
-    await setupOwner(form);
+    const r = await setupOwner({ ...form, importLegacy });
     setLoading(false);
+    if (!r.success) setError(r.message);
+  };
+
+  const handleImportAll = async () => {
+    setError('');
+    setLoading(true);
+    const r = await importLegacyWithAccounts();
+    setLoading(false);
+    if (!r.success) setError(r.message);
+    else setInfo('✅ ນຳເຂົ້າສຳເລັດ! ເຂົ້າລະບົບດ້ວຍຊື່ຜູ້ໃຊ້ ແລະ ລະຫັດຜ່ານເດີມໄດ້ເລີຍ');
   };
 
   return (
     <div className="card" style={{ padding: '32px' }}>
       <h2 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '8px', color: 'var(--text-primary)' }}>
-        🛠️ ຕັ້ງຄ່າຄັ້ງທຳອິດ — ສ້າງບັນຊີເຈົ້າຂອງ
+        🛠️ ຕັ້ງຄ່າຄັ້ງທຳອິດ
       </h2>
-      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '20px' }}>
-        ລະບົບຍັງບໍ່ມີບັນຊີເຈົ້າຂອງ. ກະລຸນາສ້າງບັນຊີ ແລະ ຕັ້ງລະຫັດຜ່ານທີ່ປອດໄພ.
+      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '16px' }}>
+        server ຍັງບໍ່ມີບັນຊີເຈົ້າຂອງ.
       </p>
       {error && <div className="alert alert-error" style={{ marginBottom: '16px' }}>❌ {error}</div>}
+      {info && <div className="alert alert-success" style={{ marginBottom: '16px' }}>{info}</div>}
+
+      {legacy.hasData && (
+        <div style={{ background: '#eff6ff', border: '1px solid #93c5fd', borderRadius: 'var(--radius)', padding: '14px', marginBottom: '18px', fontSize: '0.82rem' }}>
+          <div style={{ fontWeight: 700, color: '#1e40af', marginBottom: '6px' }}>📦 ພົບຂໍ້ມູນເກົ່າໃນ browser ນີ້</div>
+          <div style={{ color: '#1e3a8a', marginBottom: '10px' }}>
+            ການຈອງ {legacy.bookings} • ຫ້ອງ {legacy.rooms} • ຂາຍກິດຈະກຳ {legacy.activitySales} • ບັນຊີຜູ້ໃຊ້ {legacy.users}
+          </div>
+          {legacy.hasOwner && (
+            <button type="button" className="btn btn-primary btn-sm" style={{ width: '100%' }} disabled={loading} onClick={handleImportAll}>
+              📥 ນຳເຂົ້າທັງໝົດ (ໃຊ້ບັນຊີ ແລະ ລະຫັດຜ່ານເດີມ)
+            </button>
+          )}
+        </div>
+      )}
+
       <form onSubmit={handleSubmit}>
+        <div style={{ fontSize: '0.8rem', fontWeight: 700, marginBottom: '10px', color: 'var(--text-secondary)' }}>
+          {legacy.hasOwner ? 'ຫຼື ສ້າງບັນຊີເຈົ້າຂອງໃໝ່:' : 'ສ້າງບັນຊີເຈົ້າຂອງ:'}
+        </div>
         <div className="form-group">
           <label className="form-label">ຊື່ ແລະ ນາມສະກຸນ</label>
           <input className="form-input" value={form.name} onChange={e => set('name', e.target.value)} required />
@@ -293,7 +271,7 @@ function SetupOwnerCard() {
         <div className="form-row">
           <div className="form-group">
             <label className="form-label">ຊື່ຜູ້ໃຊ້ (Username)</label>
-            <input className="form-input" autoComplete="username" value={form.username} onChange={e => set('username', e.target.value)} required />
+            <input className="form-input" autoComplete="username" autoCapitalize="none" value={form.username} onChange={e => set('username', e.target.value)} required />
           </div>
           <div className="form-group">
             <label className="form-label">ເບີໂທ</label>
@@ -308,196 +286,16 @@ function SetupOwnerCard() {
           <label className="form-label">ຢືນຢັນລະຫັດຜ່ານ</label>
           <input className="form-input" type="password" autoComplete="new-password" value={form.confirm} onChange={e => set('confirm', e.target.value)} required />
         </div>
-        <button type="submit" className="btn btn-primary" disabled={loading} style={{ width: '100%', padding: '12px' }}>
+        {legacy.hasData && (
+          <label style={{ display: 'flex', gap: '8px', alignItems: 'center', fontSize: '0.82rem', marginBottom: '14px', cursor: 'pointer' }}>
+            <input type="checkbox" checked={importLegacy} onChange={e => setImportLegacy(e.target.checked)} />
+            ນຳເຂົ້າຂໍ້ມູນເກົ່າ (ການຈອງ, ຫ້ອງ, ລາຍຮັບ) ນຳ
+          </label>
+        )}
+        <button type="submit" className="btn btn-success" disabled={loading} style={{ width: '100%', padding: '12px' }}>
           {loading ? '⏳ ກຳລັງສ້າງ...' : '✅ ສ້າງບັນຊີ ແລະ ເຂົ້າລະບົບ'}
         </button>
       </form>
-    </div>
-  );
-}
-
-// ======= ປ່ອງຢ້ຽມຣີເຊັດລະຫັດຜ່ານ (Reset Password Modal) =======
-function ForgotPasswordModal({ users, initialUsername, onClose, onResetSuccess, resetPassword }) {
-  const defaultUser = (initialUsername && users?.some(u => u.username.toLowerCase() === initialUsername.toLowerCase()))
-    ? initialUsername
-    : (users?.[0]?.username || 'admin');
-
-  const [selectedUser, setSelectedUser] = useState(defaultUser);
-  const [customPassword, setCustomPassword] = useState('');
-  const [confirmPassword, setConfirmPassword] = useState('');
-  const [useCustom, setUseCustom] = useState(false);
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-
-  const QUICK_DEFAULT_PW = 'Tadfane@2026';
-
-  const handleQuickReset = async () => {
-    setError('');
-    setLoading(true);
-    const res = await resetPassword(selectedUser, QUICK_DEFAULT_PW);
-    setLoading(false);
-    if (!res.success) {
-      setError(res.message);
-    } else {
-      onResetSuccess(selectedUser, QUICK_DEFAULT_PW);
-    }
-  };
-
-  const handleCustomReset = async (e) => {
-    e.preventDefault();
-    setError('');
-    if (!customPassword) return setError('ກະລຸນາໃສ່ລະຫັດຜ່ານໃໝ່');
-    const pwErr = validatePasswordStrength(customPassword, selectedUser);
-    if (pwErr) return setError(pwErr);
-    if (customPassword !== confirmPassword) return setError('ຢືນຢັນລະຫັດຜ່ານບໍ່ກົງກັນ');
-
-    setLoading(true);
-    const res = await resetPassword(selectedUser, customPassword);
-    setLoading(false);
-    if (!res.success) {
-      setError(res.message);
-    } else {
-      onResetSuccess(selectedUser, customPassword);
-    }
-  };
-
-  return (
-    <div className="modal-overlay" onClick={onClose} style={{ zIndex: 1100 }}>
-      <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: '440px', padding: '28px' }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
-          <h3 style={{ fontSize: '1.25rem', fontWeight: 800, margin: 0, color: 'var(--text-primary)' }}>
-            🔑 ຣີເຊັດລະຫັດຜ່ານ (Reset Password)
-          </h3>
-          <button type="button" className="btn btn-ghost btn-sm" onClick={onClose} style={{ fontSize: '1.2rem', padding: '4px 8px' }}>✕</button>
-        </div>
-
-        <p style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginBottom: '16px', lineHeight: 1.5 }}>
-          ທ່ານສາມາດຕັ້ງລະຫັດຜ່ານໃໝ່ສຳລັບບັນຊີຂອງທ່ານ ເພື່ອເຂົ້າສູ່ລະບົບໄດ້ທັນທີ:
-        </p>
-
-        {error && (
-          <div className="alert alert-error" style={{ marginBottom: '16px', fontSize: '0.85rem' }}>
-            ❌ {error}
-          </div>
-        )}
-
-        {/* User selector */}
-        <div className="form-group" style={{ marginBottom: '16px' }}>
-          <label className="form-label" style={{ fontWeight: 700 }}>ເລືອກບັນຊີທີ່ຕ້ອງການຣີເຊັດ:</label>
-          {users && users.length > 0 ? (
-            <select
-              className="form-input"
-              value={selectedUser}
-              onChange={e => setSelectedUser(e.target.value)}
-              style={{ fontWeight: 700, fontSize: '0.95rem' }}
-            >
-              {users.map(u => (
-                <option key={u.id || u.username} value={u.username}>
-                  👤 {u.username} ({u.name || (u.role === 'owner' ? 'ເຈົ້າຂອງຣີສອດ' : u.role)})
-                </option>
-              ))}
-            </select>
-          ) : (
-            <input
-              className="form-input"
-              value={selectedUser}
-              onChange={e => setSelectedUser(e.target.value)}
-              placeholder="admin"
-            />
-          )}
-        </div>
-
-        {/* Option 1: Quick 1-Click Reset (Recommended) */}
-        {!useCustom ? (
-          <div style={{
-            background: 'rgba(6, 199, 85, 0.08)',
-            border: '2px dashed #86efac',
-            borderRadius: 'var(--radius)',
-            padding: '16px',
-            marginBottom: '16px',
-            textAlign: 'center',
-          }}>
-            <div style={{ fontSize: '0.82rem', color: '#166534', fontWeight: 700, marginBottom: '6px' }}>
-              ⚡ ຣີເຊັດດ່ວນ (ແນະນຳ):
-            </div>
-            <div style={{ fontSize: '0.86rem', color: 'var(--text-secondary)', marginBottom: '12px' }}>
-              ລະຫັດໃໝ່ຈະຖືກຕັ້ງເປັນ: <strong style={{ color: '#15803d', fontSize: '1rem', letterSpacing: '0.04em' }}>{QUICK_DEFAULT_PW}</strong>
-            </div>
-            <button
-              type="button"
-              className="btn btn-success"
-              style={{ width: '100%', padding: '12px', fontWeight: 800, fontSize: '0.95rem' }}
-              disabled={loading}
-              onClick={handleQuickReset}
-            >
-              {loading ? '⏳ ກຳລັງຣີເຊັດ...' : `⚡ ຢືນຢັນຣີເຊັດ "${selectedUser}" ເປັນ: ${QUICK_DEFAULT_PW}`}
-            </button>
-
-            <button
-              type="button"
-              className="btn btn-ghost btn-xs"
-              style={{ marginTop: '12px', fontSize: '0.78rem', color: 'var(--text-muted)' }}
-              onClick={() => setUseCustom(true)}
-            >
-              ຫຼື ຕ້ອງການຕັ້ງລະຫັດຜ່ານໃໝ່ຕາມໃຈ? ກົດທີ່ນີ້
-            </button>
-          </div>
-        ) : (
-          /* Option 2: Custom Password Form */
-          <form onSubmit={handleCustomReset} style={{ marginBottom: '16px' }}>
-            <div className="form-group" style={{ marginBottom: '12px' }}>
-              <label className="form-label" style={{ fontSize: '0.82rem' }}>ລະຫັດຜ່ານໃໝ່ (ຢ່າງໜ້ອຍ 8 ຕົວ, ຕົວອັກສອນ + ຕົວເລກ)</label>
-              <input
-                type="password"
-                className="form-input"
-                placeholder="ລະຫັດຜ່ານໃໝ່..."
-                value={customPassword}
-                onChange={e => setCustomPassword(e.target.value)}
-                required
-              />
-            </div>
-            <div className="form-group" style={{ marginBottom: '16px' }}>
-              <label className="form-label" style={{ fontSize: '0.82rem' }}>ຢືນຢັນລະຫັດຜ່ານໃໝ່</label>
-              <input
-                type="password"
-                className="form-input"
-                placeholder="ຢືນຢັນລະຫັດຜ່ານ..."
-                value={confirmPassword}
-                onChange={e => setConfirmPassword(e.target.value)}
-                required
-              />
-            </div>
-            <div style={{ display: 'flex', gap: '8px' }}>
-              <button
-                type="submit"
-                className="btn btn-primary"
-                style={{ flex: 1, padding: '10px', fontWeight: 700 }}
-                disabled={loading}
-              >
-                {loading ? '⏳ ກຳລັງບັນທຶກ...' : '💾 ບັນທຶກລະຫັດໃໝ່'}
-              </button>
-              <button
-                type="button"
-                className="btn btn-ghost"
-                onClick={() => setUseCustom(false)}
-              >
-                ກັບຄືນ
-              </button>
-            </div>
-          </form>
-        )}
-
-        <div style={{ textAlign: 'center' }}>
-          <button
-            type="button"
-            className="btn btn-secondary btn-sm"
-            onClick={onClose}
-            style={{ width: '100%', padding: '8px' }}
-          >
-            ປິດໜ້າຕ່າງ
-          </button>
-        </div>
-      </div>
     </div>
   );
 }

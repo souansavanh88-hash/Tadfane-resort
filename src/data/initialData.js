@@ -265,6 +265,40 @@ export const initialHotelInfo = {
   checkOutTime: '12:00',
 };
 
+export const initialActivities = [
+  {
+    id: 'resort',
+    label: 'ຣີສອດ ຫ້ອງພັກ (Resort)',
+    emoji: '🏨',
+    price: null,
+    descKey: 'desc_resort',
+    images: [],
+    customDescriptionLo: `ຫຼີກໜີຄວາມວຸ້ນວາຍ ແລ້ວມາປ່ອຍໃຈໄປກັບຫ້ອງພັກທ່າມກາງຜືນປ່າທຳມະຊາດອັນອຸດົມສົມບູນ ທີ່ຕາດຟານ. ສຳຜັດກັບຄວາມງຽບສະຫງົບ ແລະ ຮັບອາກາດອັນບໍລິສຸດບໍລິເວນພູພຽງໂບລາເວນ.`,
+    customDescriptionTh: `หลีกหนีความวุ่นวาย แล้วมาปล่อยใจไปกับห้องพักท่ามกลางผืนป่าธรรมชาติอันอุดมสมบูรณ์ที่ตาดฟาน สัมผัสความเงียบสงบและรับอากาศบริสุทธิ์ในบริเวณที่ราบสูงโบลาเวน`,
+    customDescriptionEn: `Escape the bustle and immerse yourself in our sanctuary nestled within the lush rainforest of Tad Fane.`,
+    customDescriptionVi: `Tránh xa sự ồn ào náo nhiệt để thả hồn vào không gian nghỉ dưỡng giữa đại ngàn xanh mướt tại Tad Fane.`,
+  },
+  { id: 'zipline', label: 'ສະລິງ (Zipline)', emoji: '🪂', price: 120000, descKey: 'desc_zipline', images: [] },
+  { id: 'rafting', label: 'ລ່ອງແກງ (Rafting)', emoji: '🚣', price: 180000, descKey: 'desc_rafting', images: [] },
+  { id: 'tubing', label: 'ລອຍໂຕ (Tubing)', emoji: '🍩', price: 50000, descKey: 'desc_tubing', images: [] },
+  { id: 'trekking', label: 'ຍ່າງປ່າ (Trekking)', emoji: '🥾', price: 250000, descKey: 'desc_trekking', images: [] },
+  { id: 'entrance', label: 'ປີ້ເຂົ້າຊົມ (Entrance)', emoji: '🎟️', price: 20000, descKey: 'desc_entrance', images: [] },
+  { id: 'cafe', label: 'ຄ່າເຟ (Cafe)', emoji: '☕', price: 25000, descKey: 'desc_cafe', images: [] },
+  { id: 'restaurant', label: 'ຮ້ານອາຫານ (Restaurant)', emoji: '🍲', price: 80000, descKey: 'desc_restaurant', images: [] },
+  { id: 'market', label: 'ຕະຫຼາດຊຸມຊົນ (Local Market)', emoji: '🛍️', price: 15000, descKey: 'desc_market', images: [] },
+];
+
+/** ລະຫັດລັບແບບສຸ່ມ ສຳລັບລິ້ງໃຫ້ລູກຄ້າເບິ່ງການຈອງ (ໃຊ້ໄດ້ທັງ http ທຳມະດາ) */
+export const generatePublicToken = () => {
+  const chars = 'abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let out = '';
+  const arr = new Uint32Array(16);
+  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(arr);
+  else for (let i = 0; i < arr.length; i++) arr[i] = Math.floor(Math.random() * 2 ** 32);
+  for (let i = 0; i < arr.length; i++) out += chars[arr[i] % chars.length];
+  return out;
+};
+
 export const generateBookingId = () => {
   const now = new Date();
   const y = now.getFullYear().toString().slice(-2);

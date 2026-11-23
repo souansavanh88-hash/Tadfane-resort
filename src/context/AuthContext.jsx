@@ -1,290 +1,188 @@
 import { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
-import { createPasswordRecord, verifyPassword } from '../utils/security';
-import { logAudit } from '../utils/audit';
+import { api, getToken, setToken, setServerLanIps, UNAUTHORIZED_EVENT } from '../utils/api';
+import { flush, clearOutbox, getStatus } from '../utils/syncEngine';
 
 const AuthContext = createContext(null);
 
-const SESSION_KEY = 'hotel_session';
-const USERS_KEY = 'hotel_users';
-const ATTEMPTS_KEY = 'hotel_login_attempts';
-const SESSION_HOURS = 12;
-const MAX_ATTEMPTS = 5;
-const LOCK_MINUTES = 5;
-
-// ລຶບຂໍ້ມູນລັບອອກກ່ອນສົ່ງໃຫ້ UI
-const publicUser = (u) => {
-  if (!u) return null;
-  // eslint-disable-next-line no-unused-vars
-  const { password, passwordHash, passwordSalt, ...rest } = u;
-  return rest;
+// ---------- ຂໍ້ມູນເກົ່າທີ່ເກັບໃນ browser (ລຸ້ນກ່ອນມີ server) ----------
+const LEGACY_KEYS = {
+  users: 'hotel_users',
+  rooms: 'hotel_rooms',
+  bookings: 'hotel_bookings',
+  hotelInfo: 'hotel_info',
+  guestActivities: 'guest_activities',
+  activitySales: 'activities_sales',
+  shiftCloses: 'tadfane_shift_closes',
+  auditLog: 'audit_log',
 };
 
-const readAttempts = () => {
-  try { return JSON.parse(localStorage.getItem(ATTEMPTS_KEY) || '{}'); } catch { return {}; }
-};
-const writeAttempts = (a) => localStorage.setItem(ATTEMPTS_KEY, JSON.stringify(a));
+function readLegacy() {
+  const out = {};
+  for (const [k, key] of Object.entries(LEGACY_KEYS)) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw) out[k] = JSON.parse(raw);
+    } catch { /* ignore */ }
+  }
+  return out;
+}
+
+/** ສະຫຼຸບຂໍ້ມູນເກົ່າໃນ browser ນີ້ (ສຳລັບສະແດງໃນໜ້າຕັ້ງຄ່າຄັ້ງທຳອິດ) */
+// eslint-disable-next-line react-refresh/only-export-components
+export function getLegacySummary() {
+  const d = readLegacy();
+  const users = Array.isArray(d.users) ? d.users : [];
+  return {
+    hasData: !!(d.bookings?.length || users.length || d.rooms?.length || d.activitySales?.length),
+    bookings: d.bookings?.length || 0,
+    rooms: d.rooms?.length || 0,
+    activitySales: d.activitySales?.length || 0,
+    users: users.length,
+    hasOwner: users.some(u => u.role === 'owner' && u.active !== false && (u.passwordHash || u.password)),
+  };
+}
 
 export function AuthProvider({ children }) {
-  const [users, setUsers] = useState(() => {
-    try {
-      const saved = localStorage.getItem(USERS_KEY);
-      return saved ? JSON.parse(saved) : [];
-    } catch {
-      return [];
-    }
-  });
   const [ready, setReady] = useState(false);
-  const [session, setSession] = useState(() => {
+  const [needsSetup, setNeedsSetup] = useState(false);
+  const [serverError, setServerError] = useState('');
+  const [currentUser, setCurrentUser] = useState(null);
+  const [users, setUsers] = useState([]);
+
+  // ---------- ເລີ່ມຕົ້ນ: ກວດ server + session ----------
+  const init = useCallback(async () => {
+    setServerError('');
     try {
-      const s = JSON.parse(localStorage.getItem(SESSION_KEY) || 'null');
-      // ຮູບແບບເກົ່າ (ເກັບ user ທັງໝົດ) ຫຼື ໝົດອາຍຸ → ບັງຄັບເຂົ້າລະບົບໃໝ່
-      if (!s || !s.userId || !s.expiresAt || new Date(s.expiresAt) < new Date()) {
-        localStorage.removeItem(SESSION_KEY);
-        return null;
+      const h = await api('/api/health', { auth: false });
+      setServerLanIps(h.lanIps);
+      setNeedsSetup(!!h.needsSetup);
+      if (getToken() && !h.needsSetup) {
+        try {
+          const me = await api('/api/auth/me');
+          setCurrentUser(me.user);
+        } catch (e) {
+          if (e.status === 401) setToken(null);
+          else throw e;
+        }
       }
-      return s;
-    } catch {
-      return null;
+    } catch (e) {
+      setServerError(e.message);
+    } finally {
+      setReady(true);
     }
-  });
+  }, []);
 
-  // ---------- Migration: ແປງລະຫັດຜ່ານແບບຂໍ້ຄວາມທຳມະດາ (ເກົ່າ) ໃຫ້ເປັນ hash ----------
+  useEffect(() => { init(); }, [init]);
+
+  // session ໝົດອາຍຸ / ຖືກປິດບັນຊີ → ອອກຈາກລະບົບ
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      const needs = users.some(u => typeof u.password === 'string');
-      if (!needs) { setReady(true); return; }
-      const migrated = await Promise.all(users.map(async (u) => {
-        if (typeof u.password !== 'string') return u;
-        const rec = await createPasswordRecord(u.password);
-        // eslint-disable-next-line no-unused-vars
-        const { password, ...rest } = u;
-        return { ...rest, ...rec, mustChangePassword: false };
-      }));
-      if (!cancelled) {
-        setUsers(migrated);
-        setReady(true);
-      }
-    })();
-    return () => { cancelled = true; };
-    // run once on mount
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    const onUnauthorized = () => {
+      setToken(null);
+      setCurrentUser(null);
+    };
+    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  }, []);
+
+  // ໂຫຼດລາຍຊື່ຜູ້ໃຊ້ (ເຈົ້າຂອງເທົ່ານັ້ນ)
+  const refreshUsers = useCallback(async () => {
+    try {
+      const r = await api('/api/users');
+      setUsers(r.users || []);
+    } catch { /* ignore */ }
   }, []);
 
   useEffect(() => {
-    if (!ready) return;
-    localStorage.setItem(USERS_KEY, JSON.stringify(users));
-  }, [users, ready]);
+    if (currentUser?.role === 'owner') refreshUsers();
+    else setUsers([]);
+  }, [currentUser?.id, currentUser?.role, refreshUsers]);
 
-  // sync ລະຫວ່າງແຖບ (tab) ຂອງບຣາວເຊີ
-  useEffect(() => {
-    const onStorage = (e) => {
-      if (e.key === USERS_KEY && e.newValue) {
-        try { setUsers(JSON.parse(e.newValue)); } catch { /* ignore */ }
-      }
-      if (e.key === SESSION_KEY) {
-        try { setSession(e.newValue ? JSON.parse(e.newValue) : null); } catch { setSession(null); }
-      }
-    };
-    window.addEventListener('storage', onStorage);
-    return () => window.removeEventListener('storage', onStorage);
-  }, []);
-
-  const rawCurrentUser = session ? users.find(u => u.id === session.userId) : null;
-  const currentUser = useMemo(() => publicUser(rawCurrentUser), [rawCurrentUser]);
-
-  // ກວດ session ໝົດອາຍຸທຸກນາທີ
-  useEffect(() => {
-    if (!session) return;
-    const timer = setInterval(() => {
-      if (new Date(session.expiresAt) < new Date()) {
-        setSession(null);
-        localStorage.removeItem(SESSION_KEY);
-      }
-    }, 60000);
-    return () => clearInterval(timer);
-  }, [session]);
-
-  const needsSetup = ready && users.filter(u => u.role === 'owner').length === 0;
-
-  const startSession = (user) => {
-    const s = {
-      userId: user.id,
-      expiresAt: new Date(Date.now() + SESSION_HOURS * 3600 * 1000).toISOString(),
-    };
-    setSession(s);
-    localStorage.setItem(SESSION_KEY, JSON.stringify(s));
-  };
-
-  // ---------- LOGIN ----------
+  // ---------- LOGIN / LOGOUT ----------
   const login = async (username, password) => {
-    const uname = (username || '').trim().toLowerCase();
-    const attempts = readAttempts();
-    const rec = attempts[uname] || { count: 0, lockedUntil: null };
-
-    if (rec.lockedUntil && new Date(rec.lockedUntil) > new Date()) {
-      const mins = Math.ceil((new Date(rec.lockedUntil) - new Date()) / 60000);
-      return { success: false, message: `ບັນຊີນີ້ຖືກລັອກຊົ່ວຄາວ ເນື່ອງຈາກໃສ່ລະຫັດຜິດຫຼາຍເທື່ອ. ກະລຸນາລອງໃໝ່ໃນ ${mins} ນາທີ` };
+    try {
+      const r = await api('/api/auth/login', { method: 'POST', body: { username, password }, auth: false });
+      setToken(r.token);
+      setCurrentUser(r.user);
+      return { success: true, user: r.user };
+    } catch (e) {
+      return { success: false, message: e.message };
     }
-
-    const user = users.find(u => u.username.toLowerCase() === uname);
-    const ok = user && user.active !== false && await verifyPassword(password, user);
-
-    if (!ok) {
-      rec.count += 1;
-      if (rec.count >= MAX_ATTEMPTS) {
-        rec.lockedUntil = new Date(Date.now() + LOCK_MINUTES * 60000).toISOString();
-        rec.count = 0;
-        logAudit(user ? publicUser(user) : undefined, 'auth.locked', `ລັອກບັນຊີ "${uname}" ${LOCK_MINUTES} ນາທີ`);
-      } else {
-        logAudit(user ? publicUser(user) : undefined, 'auth.login_failed', `ຊື່ຜູ້ໃຊ້ "${uname}" (ເທື່ອທີ ${rec.count})`);
-      }
-      attempts[uname] = rec;
-      writeAttempts(attempts);
-      if (user && user.active === false) return { success: false, message: 'ບັນຊີນີ້ຖືກປິດການໃຊ້ງານ' };
-      return { success: false, message: 'ຊື່ຜູ້ໃຊ້ ຫຼື ລະຫັດຜ່ານບໍ່ຖືກຕ້ອງ' };
-    }
-
-    delete attempts[uname];
-    writeAttempts(attempts);
-    startSession(user);
-    logAudit(publicUser(user), 'auth.login', 'ເຂົ້າລະບົບສຳເລັດ');
-    return { success: true, user: publicUser(user) };
   };
 
-  const logout = useCallback(() => {
-    if (currentUser) logAudit(currentUser, 'auth.logout', 'ອອກຈາກລະບົບ');
-    setSession(null);
-    localStorage.removeItem(SESSION_KEY);
-  }, [currentUser]);
+  const logout = useCallback(async () => {
+    try { await flush(); } catch { /* ignore */ }
+    if (getStatus().pending > 0 && !window.confirm('ຍັງມີຂໍ້ມູນທີ່ຍັງບໍ່ໄດ້ສົ່ງໄປ server (ເນັດຂາດ). ອອກຈາກລະບົບຕອນນີ້ ຂໍ້ມູນນັ້ນຈະຫາຍ. ຕ້ອງການອອກແທ້ບໍ່?')) {
+      return;
+    }
+    try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* ignore */ }
+    clearOutbox();
+    setToken(null);
+    setCurrentUser(null);
+  }, []);
 
   // ---------- FIRST-RUN SETUP ----------
-  const setupOwner = async ({ username, name, password, phone }) => {
-    const rec = await createPasswordRecord(password);
-    const owner = {
-      id: `u${Date.now()}`, username: username.trim(), name: name.trim(), phone: phone || '',
-      role: 'owner', active: true, mustChangePassword: false, ...rec,
-    };
-    setUsers(prev => [...prev, owner]);
-    startSession(owner);
-    logAudit(publicUser(owner), 'user.create', `ສ້າງບັນຊີເຈົ້າຂອງ "${owner.username}" (ຕັ້ງຄ່າຄັ້ງທຳອິດ)`);
+  /** ສ້າງບັນຊີເຈົ້າຂອງໃໝ່ (ເລືອກນຳເຂົ້າຂໍ້ມູນເກົ່າໃນ browser ນີ້ນຳໄດ້) */
+  const setupOwner = async ({ username, name, password, phone, importLegacy = false }) => {
+    try {
+      const r = await api('/api/auth/setup', {
+        method: 'POST',
+        auth: false,
+        body: { mode: 'create', owner: { username, name, password, phone }, importData: importLegacy ? readLegacy() : undefined },
+      });
+      setToken(r.token);
+      setNeedsSetup(false);
+      setCurrentUser(r.user);
+      return { success: true };
+    } catch (e) {
+      return { success: false, message: e.message };
+    }
   };
 
-  // ---------- USER MANAGEMENT ----------
+  /** ນຳເຂົ້າຂໍ້ມູນ + ບັນຊີເກົ່າທັງໝົດ (ເຂົ້າລະບົບດ້ວຍລະຫັດເດີມໄດ້ເລີຍ) */
+  const importLegacyWithAccounts = async () => {
+    try {
+      await api('/api/auth/setup', { method: 'POST', auth: false, body: { mode: 'import', importData: readLegacy() } });
+      setNeedsSetup(false);
+      return { success: true };
+    } catch (e) {
+      return { success: false, message: e.message };
+    }
+  };
+
+  // ---------- PASSWORD ----------
+  const changePassword = async (currentPassword, newPassword) => {
+    try {
+      const r = await api('/api/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } });
+      setCurrentUser(r.user);
+      return { success: true };
+    } catch (e) {
+      return { success: false, message: e.message };
+    }
+  };
+
+  // ---------- USER MANAGEMENT (owner) ----------
   const usernameExists = (username, exceptId) =>
-    users.some(u => u.username.toLowerCase() === username.trim().toLowerCase() && u.id !== exceptId);
+    users.some(u => u.username.toLowerCase() === (username || '').trim().toLowerCase() && u.id !== exceptId);
 
   const addUser = async (userData) => {
-    const { password, ...rest } = userData;
-    const rec = await createPasswordRecord(password);
-    const newUser = {
-      ...rest, username: rest.username.trim(), id: `u${Date.now()}`,
-      active: true, mustChangePassword: false, ...rec,
-    };
-    setUsers(prev => [...prev, newUser]);
-    logAudit(currentUser, 'user.create', `ເພີ່ມຜູ້ໃຊ້ "${newUser.username}" (${newUser.role})`);
+    const r = await api('/api/users', { method: 'POST', body: userData });
+    await refreshUsers();
+    return r.user;
   };
 
   const updateUser = async (id, data) => {
     // eslint-disable-next-line no-unused-vars
-    const { password, passwordHash, passwordSalt, ...rest } = data;
-    let rec = {};
-    if (password) {
-      rec = { ...(await createPasswordRecord(password)), mustChangePassword: false };
-    }
-    setUsers(prev => prev.map(u => u.id === id ? { ...u, ...rest, ...rec } : u));
-    const target = users.find(u => u.id === id);
-    logAudit(currentUser, 'user.update', `ແກ້ໄຂຜູ້ໃຊ້ "${target?.username}"${password ? ' (ຣີເຊັດລະຫັດຜ່ານ)' : ''}`);
+    const { passwordHash, passwordSalt, ...rest } = data;
+    if (!rest.password) delete rest.password;
+    const r = await api(`/api/users/${encodeURIComponent(id)}`, { method: 'PATCH', body: rest });
+    await refreshUsers();
+    if (id === currentUser?.id) setCurrentUser(r.user);
+    return r.user;
   };
 
-  const deleteUser = (id) => {
-    const target = users.find(u => u.id === id);
-    setUsers(prev => prev.filter(u => u.id !== id));
-    logAudit(currentUser, 'user.delete', `ລຶບຜູ້ໃຊ້ "${target?.username}"`);
-  };
-
-  const changePassword = async (currentPassword, newPassword) => {
-    if (!rawCurrentUser) return { success: false, message: 'ກະລຸນາເຂົ້າລະບົບ' };
-    const ok = await verifyPassword(currentPassword, rawCurrentUser);
-    if (!ok) return { success: false, message: 'ລະຫັດຜ່ານປັດຈຸບັນບໍ່ຖືກຕ້ອງ' };
-    if (await verifyPassword(newPassword, rawCurrentUser)) {
-      return { success: false, message: 'ລະຫັດຜ່ານໃໝ່ຕ້ອງບໍ່ຊ້ຳກັບລະຫັດເກົ່າ' };
-    }
-    const rec = await createPasswordRecord(newPassword);
-    setUsers(prev => prev.map(u => u.id === rawCurrentUser.id ? { ...u, ...rec, mustChangePassword: false } : u));
-    logAudit(currentUser, 'auth.password_change', 'ປ່ຽນລະຫັດຜ່ານຂອງຕົນເອງ');
-    return { success: true };
-  };
-
-  // ---------- RESET PASSWORD (ເມື່ອລືມລະຫັດ) ----------
-  const resetPassword = async (username, newPassword, autoLogin = true) => {
-    const uname = (username || '').trim().toLowerCase();
-    const user = users.find(u => u.username.toLowerCase() === uname);
-    if (!user) return { success: false, message: `ບໍ່ພົບຊື່ຜູ້ໃຊ້ "${username}" ໃນລະບົບ` };
-    const rec = await createPasswordRecord(newPassword);
-    const updatedUser = { ...user, ...rec, mustChangePassword: false };
-    setUsers(prev => prev.map(u => u.id === user.id ? updatedUser : u));
-    
-    // Clear all failed login attempts & locks
-    const attempts = readAttempts();
-    delete attempts[uname];
-    writeAttempts(attempts);
-
-    if (autoLogin) {
-      startSession(updatedUser);
-    }
-
-    logAudit(publicUser(user), 'auth.password_reset', `ຣີເຊັດລະຫັດຜ່ານສຳລັບ "${uname}" (ປົດລັອກອັດຕະໂນມັດ)`);
-    return { success: true };
-  };
-
-  const unlockAccount = (username) => {
-    const uname = (username || '').trim().toLowerCase();
-    const attempts = readAttempts();
-    if (uname) {
-      delete attempts[uname];
-    } else {
-      localStorage.removeItem(ATTEMPTS_KEY);
-    }
-    writeAttempts(attempts);
-  };
-
-  // ---------- EMERGENCY LOGIN (ເຂົ້າລະບົບທັນທີ 100%) ----------
-  const emergencyLogin = async () => {
-    try {
-      localStorage.removeItem(ATTEMPTS_KEY);
-      let owner = users.find(u => u.role === 'owner') || users[0];
-      const rec = await createPasswordRecord('Tadfane@2026');
-
-      if (!owner) {
-        owner = {
-          id: `u${Date.now()}`,
-          username: 'admin',
-          name: 'ເຈົ້າຂອງຣີສອດ (Admin)',
-          phone: '',
-          role: 'owner',
-          active: true,
-          mustChangePassword: false,
-          ...rec,
-        };
-        setUsers([owner]);
-        localStorage.setItem(USERS_KEY, JSON.stringify([owner]));
-      } else {
-        owner = { ...owner, active: true, ...rec, mustChangePassword: false };
-        setUsers(prev => {
-          const updated = prev.map(u => u.id === owner.id ? owner : u);
-          localStorage.setItem(USERS_KEY, JSON.stringify(updated));
-          return updated;
-        });
-      }
-
-      startSession(owner);
-      logAudit(publicUser(owner), 'auth.emergency_login', 'ເຂົ້າລະບົບສຸກເສີນ (1-Click Login)');
-      return { success: true, user: publicUser(owner) };
-    } catch (err) {
-      console.error('Emergency login error:', err);
-      return { success: false, message: err.message };
-    }
+  const deleteUser = async (id) => {
+    await api(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
+    await refreshUsers();
   };
 
   const hasRole = (roles) => {
@@ -296,26 +194,23 @@ export function AuthProvider({ children }) {
   const canAccess = (feature) => {
     if (!currentUser) return false;
     const permissions = {
-      owner: ['dashboard', 'cashier', 'booking', 'activities', 'checkin', 'checkout', 'reports', 'settings', 'users', 'audit'],
-      reception: ['dashboard', 'cashier', 'booking', 'activities', 'checkin', 'checkout'],
-      housekeeping: ['dashboard'],
+      owner: ['dashboard', 'cashier', 'booking', 'activities', 'checkin', 'checkout', 'housekeeping', 'expenses', 'reports', 'settings', 'users', 'audit'],
+      reception: ['dashboard', 'cashier', 'booking', 'activities', 'checkin', 'checkout', 'housekeeping', 'expenses'],
+      housekeeping: ['dashboard', 'housekeeping'],
     };
     return permissions[currentUser.role]?.includes(feature) ?? false;
   };
 
-  const publicUsers = useMemo(() => users.map(publicUser), [users]);
+  const value = useMemo(() => ({
+    ready, needsSetup, serverError, retryConnect: init,
+    currentUser, users,
+    login, logout, setupOwner, importLegacyWithAccounts, changePassword,
+    addUser, updateUser, deleteUser, usernameExists, refreshUsers,
+    hasRole, canAccess,
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }), [ready, needsSetup, serverError, currentUser, users, init, logout, refreshUsers]);
 
-  return (
-    <AuthContext.Provider value={{
-      ready, needsSetup,
-      currentUser, users: publicUsers,
-      login, logout, setupOwner, changePassword, resetPassword, unlockAccount, emergencyLogin,
-      addUser, updateUser, deleteUser, usernameExists,
-      hasRole, canAccess,
-    }}>
-      {children}
-    </AuthContext.Provider>
-  );
+  return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
 
 // eslint-disable-next-line react-refresh/only-export-components

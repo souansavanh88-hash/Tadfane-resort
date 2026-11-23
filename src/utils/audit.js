@@ -1,46 +1,27 @@
 // ================== AUDIT LOG ==================
-// ບັນທຶກວ່າໃຜເຮັດຫຍັງ ເວລາໃດ (ເກັບໄວ້ໃນ localStorage, ສູງສຸດ 3000 ລາຍການ)
-
-const KEY = 'audit_log';
-const MAX = 3000;
+// ບັນທຶກວ່າໃຜເຮັດຫຍັງ ເວລາໃດ — ເກັບຢູ່ server (ຊື່ຜູ້ໃຊ້ຖືກກຳນົດໂດຍ server ຈາກ session, ປອມບໍ່ໄດ້)
+import { pushAudit, getCollection, subscribe } from './syncEngine';
 
 export const AUDIT_EVENT = 'audit_log_updated';
 
+/** ລາຍການ audit ລ່າສຸດ (ສະເພາະເຈົ້າຂອງ ທີ່ server ສົ່ງມາໃຫ້) */
 export function getAuditLog() {
-  try {
-    return JSON.parse(localStorage.getItem(KEY) || '[]');
-  } catch {
-    return [];
-  }
+  return getCollection('auditLog') || [];
 }
 
+// ແຈ້ງ UI ເມື່ອມີ audit ໃໝ່
+subscribe('auditLog', () => {
+  if (typeof window !== 'undefined') setTimeout(() => window.dispatchEvent(new Event(AUDIT_EVENT)), 0);
+});
+
 /**
- * @param {object|null} user  ຜູ້ໃຊ້ທີ່ເຮັດລາຍການ (ຫຼື null = ລູກຄ້າ/ລະບົບ)
+ * @param {object|null} _user  (ບໍ່ໃຊ້ແລ້ວ — server ຮູ້ເອງວ່າແມ່ນໃຜ)
  * @param {string} action     ລະຫັດການກະທຳ ເຊັ່ນ 'booking.create'
  * @param {string} details    ລາຍລະອຽດ
  * @param {object} meta       ຂໍ້ມູນເພີ່ມເຕີມ (optional)
  */
-export function logAudit(user, action, details = '', meta = {}) {
-  const entry = {
-    id: `LG-${Date.now()}-${Math.floor(Math.random() * 1000)}`,
-    at: new Date().toISOString(),
-    userId: user?.id || null,
-    username: user?.username || (user === null ? 'guest' : 'system'),
-    userName: user?.name || (user === null ? 'ລູກຄ້າ (ອອນລາຍ)' : 'ລະບົບ'),
-    role: user?.role || null,
-    action,
-    details,
-    meta,
-  };
-  const log = [entry, ...getAuditLog()].slice(0, MAX);
-  try {
-    localStorage.setItem(KEY, JSON.stringify(log));
-  } catch {
-    // storage full — drop oldest half
-    localStorage.setItem(KEY, JSON.stringify(log.slice(0, Math.floor(MAX / 2))));
-  }
-  window.dispatchEvent(new Event(AUDIT_EVENT));
-  return entry;
+export function logAudit(_user, action, details = '', meta = {}) {
+  pushAudit({ action, details: String(details || ''), meta });
 }
 
 export const AUDIT_ACTION_LABELS = {
@@ -72,4 +53,19 @@ export const AUDIT_ACTION_LABELS = {
   'room.delete': '🛏️ ລຶບຫ້ອງ',
   'hotel.update': '🏨 ແກ້ໄຂຂໍ້ມູນຣີສອດ',
   'report.export': '📤 Export ລາຍງານ',
+  'auth.password_reset': '🔑 ຣີເຊັດລະຫັດຜ່ານ',
+  'booking.signed': '✍️ ລູກຄ້າເຊັນຢືນຢັນ',
+  'booking.refund': '💸 ຄືນເງິນ',
+  'expense.create': '📉 ບັນທຶກລາຍຈ່າຍ',
+  'expense.update': '📉 ແກ້ໄຂລາຍຈ່າຍ',
+  'expense.delete': '📉 ລຶບລາຍຈ່າຍ',
+  'maintenance.report': '🛠️ ແຈ້ງສ້ອມແປງ',
+  'maintenance.resolve': '🛠️ ສ້ອມແປງສຳເລັດ',
+  'rateplan.update': '📅 ແກ້ໄຂລາຄາລະດູການ',
+  'rateplan.delete': '📅 ລຶບລາຄາລະດູການ',
+  'shift.close': '🧾 ປິດກະ',
+  'system.backup': '💾 ສຳຮອງຂໍ້ມູນ',
+  'system.restore': '♻️ ກູ້ຄືນຂໍ້ມູນ',
+  'system.import': '📥 ນຳເຂົ້າຂໍ້ມູນເກົ່າ',
+  'system.notify': '🔔 ຕັ້ງຄ່າແຈ້ງເຕືອນ',
 };

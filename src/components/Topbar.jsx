@@ -1,7 +1,14 @@
 import { useHotel } from '../context/HotelContext';
 
 export default function Topbar({ title, subtitle, onMenuClick, sidebarCollapsed, onToggleSidebar }) {
-  const { lang, changeLang } = useHotel();
+  const { lang, changeLang, syncStatus } = useHotel();
+  const st = syncStatus?.status;
+  const pending = syncStatus?.pending || 0;
+  const syncBadge = st === 'online'
+    ? (pending > 0 ? { c: '#d97706', bg: '#fef3c7', txt: `⏳ ກຳລັງບັນທຶກ (${pending})` } : { c: '#15803d', bg: '#dcfce7', txt: '🟢 ອອນລາຍ' })
+    : st === 'offline'
+      ? { c: '#b91c1c', bg: '#fee2e2', txt: `🔴 ອອບລາຍ${pending ? ` — ລໍສົ່ງ ${pending}` : ''}` }
+      : { c: '#475569', bg: '#f1f5f9', txt: '⏳ ກຳລັງເຊື່ອມຕໍ່' };
   const now = new Date();
   const dateStr = now.toLocaleDateString('lo-LA', {
     weekday: 'long', year: 'numeric', month: 'long', day: 'numeric'
@@ -29,6 +36,13 @@ export default function Topbar({ title, subtitle, onMenuClick, sidebarCollapsed,
         </div>
       </div>
       <div className="topbar-right" style={{ display: 'flex', alignItems: 'center', gap: '20px' }}>
+        {/* Sync status */}
+        <div
+          title={st === 'offline' ? 'ເຊື່ອມຕໍ່ server ບໍ່ໄດ້ — ຂໍ້ມູນຈະຖືກເກັບໄວ້ ແລະ ສົ່ງອັດຕະໂນມັດເມື່ອເຊື່ອມຕໍ່ໄດ້' : 'ສະຖານະການເຊື່ອມຕໍ່ server'}
+          style={{ fontSize: '0.72rem', fontWeight: 700, color: syncBadge.c, background: syncBadge.bg, padding: '4px 10px', borderRadius: '999px', whiteSpace: 'nowrap' }}
+        >
+          {syncBadge.txt}
+        </div>
         {/* Multilingual Selector */}
         <div style={{ display: 'flex', gap: '4px', background: 'rgba(255,255,255,0.08)', padding: '4px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
           {Object.keys(flags).map(l => (

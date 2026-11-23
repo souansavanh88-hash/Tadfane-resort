@@ -21,6 +21,8 @@ const NAV_ITEMS = [
       { id: 'booking', icon: '📋', labelKey: 'sidebarBooking', roles: ['owner', 'reception'] },
       { id: 'checkin', icon: '📱', labelKey: 'sidebarCheckin', roles: ['owner', 'reception'] },
       { id: 'activities', icon: '🎡', labelKey: 'sidebarActivities', roles: ['owner', 'reception'] },
+      { id: 'housekeeping', icon: '🧹', label: 'ແມ່ບ້ານ & ສ້ອມແປງ', roles: ['owner', 'reception', 'housekeeping'] },
+      { id: 'expenses', icon: '📉', label: 'ລາຍຈ່າຍ', roles: ['owner', 'reception'] },
     ]
   },
   {
@@ -34,7 +36,10 @@ const NAV_ITEMS = [
 
 export default function Sidebar({ activePage, navigate, isOpen, onChangePassword }) {
   const { currentUser, logout } = useAuth();
-  const { t, bookings = [] } = useHotel();
+  const { t, bookings = [], rooms = [], maintenanceLogs = [] } = useHotel();
+  const cleaningCount = rooms.filter(r => r.status === 'cleaning').length;
+  const openIssues = maintenanceLogs.filter(l => l.status === 'open').length;
+  const hkBadge = cleaningCount + openIssues;
   const pendingCount = bookings.filter(b => b.status === 'pending').length;
   const bookedCount = bookings.filter(b => b.status === 'booked').length;
   const bookingBadgeCount = pendingCount + bookedCount;
@@ -74,7 +79,7 @@ export default function Sidebar({ activePage, navigate, isOpen, onChangePassword
                   onClick={() => navigate(item.id)}
                 >
                   <span className="nav-item-icon">{item.icon}</span>
-                  <span>{t(item.labelKey)}</span>
+                  <span>{item.label || t(item.labelKey)}</span>
                   {item.id === 'booking' && bookingBadgeCount > 0 && (
                     <span
                       style={{
@@ -90,6 +95,14 @@ export default function Sidebar({ activePage, navigate, isOpen, onChangePassword
                       title={pendingCount > 0 ? `ລໍຢືນຢັນ ${pendingCount} · ລໍ Check-in ${bookedCount}` : `ລໍ Check-in ${bookedCount}`}
                     >
                       {bookingBadgeCount}
+                    </span>
+                  )}
+                  {item.id === 'housekeeping' && hkBadge > 0 && (
+                    <span
+                      style={{ marginLeft: 'auto', background: '#7c3aed', color: '#fff', fontSize: '0.7rem', fontWeight: 800, padding: '1px 7px', borderRadius: '999px', lineHeight: 1.4 }}
+                      title={`ລໍອະນາໄມ ${cleaningCount} · ແຈ້ງສ້ອມ ${openIssues}`}
+                    >
+                      {hkBadge}
                     </span>
                   )}
                 </div>
