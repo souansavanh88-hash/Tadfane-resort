@@ -1,15 +1,31 @@
-// ================== Sync engine: ເຊື່ອມຂໍ້ມູນລະຫວ່າງເຄື່ອງ ຜ່ານ server ==================
-// - ໂຫຼດຂໍ້ມູນທັງໝົດຈາກ server ຫຼັງ login
-// - ການປ່ຽນແປງໃນເຄື່ອງນີ້ → ສົ່ງເປັນ ops (upsert/delete ຕາມ id) ໄປ server
-// - ຖ້າເນັດຂາດ → ເກັບໄວ້ໃນຄິວ (outbox) ແລ້ວສົ່ງຄືນອັດຕະໂນມັດເມື່ອເຊື່ອມຕໍ່ໄດ້
-// - ຮັບການປ່ຽນແປງຈາກເຄື່ອງອື່ນແບບ real-time ຜ່ານ Server-Sent Events
+// ================== Sync engine: ເຊື່ອມຂໍ້ມູນລະຫວ່າງເຄື່ອງ (Server + Cloud Firestore) ==================
 import { api, getToken, CLIENT_ID } from './api';
+import {
+  collection,
+  doc,
+  setDoc,
+  deleteDoc,
+  onSnapshot,
+} from 'firebase/firestore';
+import { db } from '../config/firebase';
 
 const OUTBOX_KEY = 'hotel_outbox';
 const BATCH = 25;
 
-const listeners = new Map(); // key -> Set<fn(kind, payload)>  (key = collection name ຫຼື 'doc:<name>')
-const globalListeners = new Set(); // fn(msg)
+const FIRESTORE_MAP = {
+  rooms: 'hotel_rooms',
+  bookings: 'hotel_bookings',
+  activitySales: 'hotel_activity_sales',
+  guestActivities: 'hotel_activities',
+  shiftCloses: 'hotel_shift_closes',
+  expenses: 'hotel_expenses',
+  maintenanceLogs: 'hotel_maintenance',
+  ratePlans: 'hotel_rate_plans',
+  auditLog: 'hotel_audit_log',
+};
+
+const listeners = new Map();
+const globalListeners = new Set();
 
 let state = { collections: {}, docs: {} };
 let loaded = false;
@@ -18,14 +34,20 @@ let flushing = false;
 let retryTimer = null;
 let es = null;
 let reconnectTimer = null;
-let status = 'idle'; // idle | connecting | online | offline
+let status = 'idle';
 let running = false;
+let isFirebaseMode = false;
+let fbUnsubscribers = [];
+
+export function setFirebaseMode(val) {
+  isFirebaseMode = !!val;
+}
 
 function loadOutbox() {
   try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); } catch { return []; }
 }
 function saveOutbox() {
-  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); } catch { /* quota — ເກັບໃນ memory ຕໍ່ */ }
+  try { localStorage.setItem(OUTBOX_KEY, JSON.stringify(outbox)); } catch { /* ignore */ }
 }
 
 function emit(key, kind, payload) {
@@ -89,7 +111,7 @@ export function diffById(prev, next) {
   return ops;
 }
 
-// ---------- push (local → server) ----------
+// ---------- push (local → server / Firestore) ----------
 function enqueue(item) {
   outbox.push(item);
   saveOutbox();
@@ -100,13 +122,41 @@ function enqueue(item) {
 export function pushOps(coll, ops) {
   if (!ops.length) return;
   state.collections[coll] = applyOps(state.collections[coll] || [], ops);
+  if (isFirebaseMode) {
+    const fsColl = FIRESTORE_MAP[coll] || coll;
+    for (const o of ops) {
+      try {
+        if (o.op === 'upsert' && o.item && o.item.id != null) {
+          setDoc(doc(db, fsColl, String(o.item.id)), o.item, { merge: true }).catch(console.warn);
+        } else if (o.op === 'delete' && o.id != null) {
+          deleteDoc(doc(db, fsColl, String(o.id))).catch(console.warn);
+        }
+      } catch (err) {
+        console.warn('Firestore pushOps error:', err);
+      }
+    }
+    return;
+  }
   enqueue({ type: 'ops', coll, ops });
 }
+
 export function pushDoc(name, value) {
   state.docs[name] = value;
+  if (isFirebaseMode) {
+    if (name === 'hotelInfo') {
+      setDoc(doc(db, 'hotel_info', 'general'), value, { merge: true }).catch(console.warn);
+    }
+    return;
+  }
   enqueue({ type: 'doc', name, value });
 }
+
 export function pushAudit(entry) {
+  if (isFirebaseMode) {
+    const id = `audit-${Date.now()}`;
+    setDoc(doc(db, 'hotel_audit_log', id), { id, ...entry }, { merge: true }).catch(console.warn);
+    return;
+  }
   if (!getToken()) return;
   enqueue({ type: 'audit', entry });
 }
@@ -117,6 +167,7 @@ function scheduleRetry() {
 }
 
 export async function flush() {
+  if (isFirebaseMode) return; // Firestore SDK handles its own offline queue
   if (flushing || !getToken() || outbox.length === 0) return;
   flushing = true;
   try {
@@ -136,7 +187,6 @@ export async function flush() {
       setStatus('offline');
       scheduleRetry();
     } else if (e.status !== 401) {
-      // ຂໍ້ມູນຜິດຮູບແບບ — ຖິ້ມ batch ນີ້ເພື່ອບໍ່ໃຫ້ຄ້າງ ແລ້ວໂຫຼດຂໍ້ມູນຈິງຈາກ server
       outbox.splice(0, Math.min(BATCH, outbox.length));
       saveOutbox();
       emitGlobal({ type: 'error', message: e.message });
@@ -146,6 +196,34 @@ export async function flush() {
     flushing = false;
     emitGlobal({ type: 'status' });
   }
+}
+
+// ---------- Firestore Listeners ----------
+function startFirebaseListeners() {
+  fbUnsubscribers.forEach(un => un());
+  fbUnsubscribers = [];
+
+  // 1. Subscribe to all collections
+  for (const [key, collName] of Object.entries(FIRESTORE_MAP)) {
+    const un = onSnapshot(collection(db, collName), (snapshot) => {
+      const items = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+      state.collections[key] = items;
+      emit(key, 'replace', items);
+    }, (err) => console.warn(`Firestore collection error [${collName}]:`, err));
+    fbUnsubscribers.push(un);
+  }
+
+  // 2. Subscribe to hotelInfo doc
+  const unDoc = onSnapshot(doc(db, 'hotel_info', 'general'), (snap) => {
+    if (snap.exists()) {
+      state.docs.hotelInfo = snap.data();
+      emit('doc:hotelInfo', 'replace', snap.data());
+    }
+  }, (err) => console.warn('Firestore doc error [hotel_info]:', err));
+  fbUnsubscribers.push(unDoc);
+
+  loaded = true;
+  setStatus('online');
 }
 
 // ---------- load / reload ----------
@@ -160,8 +238,8 @@ function replaceAll(next) {
 }
 
 export async function reload() {
+  if (isFirebaseMode) return;
   const s = await api('/api/state');
-  // ນຳການປ່ຽນແປງທີ່ຍັງບໍ່ໄດ້ສົ່ງ ມາວາງທັບອີກຄັ້ງ
   for (const it of outbox) {
     if (it.type === 'ops' && s.collections[it.coll]) s.collections[it.coll] = applyOps(s.collections[it.coll], it.ops);
     if (it.type === 'doc') s.docs[it.name] = it.value;
@@ -199,10 +277,10 @@ function connectEvents() {
   es.onerror = () => {
     hadError = true;
     setStatus('offline');
-    if (es && es.readyState === 2 /* CLOSED */) {
+    if (es && es.readyState === 2) {
       clearTimeout(reconnectTimer);
       reconnectTimer = setTimeout(async () => {
-        try { await api('/api/auth/me'); } catch { /* 401 → AuthContext ຈະ logout */ }
+        try { await api('/api/auth/me'); } catch { /* ignore */ }
         connectEvents();
       }, 5000);
     }
@@ -214,6 +292,10 @@ function connectEvents() {
 
 export async function start() {
   running = true;
+  if (isFirebaseMode) {
+    startFirebaseListeners();
+    return;
+  }
   setStatus('connecting');
   await reload();
   connectEvents();
@@ -222,6 +304,8 @@ export async function start() {
 
 export function stop() {
   running = false;
+  fbUnsubscribers.forEach(un => un());
+  fbUnsubscribers = [];
   if (es) { es.close(); es = null; }
   clearTimeout(reconnectTimer);
   clearTimeout(retryTimer);
@@ -231,13 +315,11 @@ export function stop() {
   setStatus('idle');
 }
 
-/** ລ້າງຄິວ (ໃຊ້ຕອນ logout ຫຼັງພະຍາຍາມສົ່ງແລ້ວ) */
 export function clearOutbox() {
   outbox = [];
   saveOutbox();
 }
 
-// ເມື່ອກັບມາອອນລາຍ ໃຫ້ສົ່ງຄິວທັນທີ
 if (typeof window !== 'undefined') {
   window.addEventListener('online', () => flush());
 }

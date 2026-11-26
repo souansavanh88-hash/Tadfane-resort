@@ -1,30 +1,21 @@
-import { createContext, useContext, useState, useEffect, useMemo, useCallback } from 'react';
+import { createContext, useContext, useState, useEffect, useCallback, useMemo } from 'react';
 import { api, getToken, setToken, setServerLanIps, UNAUTHORIZED_EVENT } from '../utils/api';
-import { flush, clearOutbox, getStatus } from '../utils/syncEngine';
+import { flush, clearOutbox, getStatus, setFirebaseMode as setEngineFirebaseMode } from '../utils/syncEngine';
+import {
+  checkFirebaseSetup,
+  firebaseLogin,
+  firebaseSetupOwner,
+  getFirebaseSession,
+  setFirebaseSession,
+} from '../services/firebaseAuth';
+import { collection, getDocs, doc, setDoc, deleteDoc, updateDoc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 
 const AuthContext = createContext(null);
 
-// ---------- ຂໍ້ມູນເກົ່າທີ່ເກັບໃນ browser (ລຸ້ນກ່ອນມີ server) ----------
-const LEGACY_KEYS = {
-  users: 'hotel_users',
-  rooms: 'hotel_rooms',
-  bookings: 'hotel_bookings',
-  hotelInfo: 'hotel_info',
-  guestActivities: 'guest_activities',
-  activitySales: 'activities_sales',
-  shiftCloses: 'tadfane_shift_closes',
-  auditLog: 'audit_log',
-};
-
+const LEGACY_STORAGE_KEY = 'hotel_data_v1';
 function readLegacy() {
-  const out = {};
-  for (const [k, key] of Object.entries(LEGACY_KEYS)) {
-    try {
-      const raw = localStorage.getItem(key);
-      if (raw) out[k] = JSON.parse(raw);
-    } catch { /* ignore */ }
-  }
-  return out;
+  try { return JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY) || '{}'); } catch { return {}; }
 }
 
 /** ສະຫຼຸບຂໍ້ມູນເກົ່າໃນ browser ນີ້ (ສຳລັບສະແດງໃນໜ້າຕັ້ງຄ່າຄັ້ງທຳອິດ) */
@@ -48,14 +39,18 @@ export function AuthProvider({ children }) {
   const [serverError, setServerError] = useState('');
   const [currentUser, setCurrentUser] = useState(null);
   const [users, setUsers] = useState([]);
+  const [isFirebase, setIsFirebase] = useState(false);
 
-  // ---------- ເລີ່ມຕົ້ນ: ກວດ server + session ----------
+  // ---------- ເລີ່ມຕົ້ນ: ກວດ server ຫຼື Firebase Firestore ----------
   const init = useCallback(async () => {
     setServerError('');
     try {
+      // 1. ລອງເຊື່ອມຕໍ່ Node Server ທ້ອງຖິ່ນກ່ອນ (ຖ້າມີ)
       const h = await api('/api/health', { auth: false });
       setServerLanIps(h.lanIps);
       setNeedsSetup(!!h.needsSetup);
+      setIsFirebase(false);
+      setEngineFirebaseMode(false);
       if (getToken() && !h.needsSetup) {
         try {
           const me = await api('/api/auth/me');
@@ -65,8 +60,21 @@ export function AuthProvider({ children }) {
           else throw e;
         }
       }
-    } catch (e) {
-      setServerError(e.message);
+    } catch {
+      // 2. ຖ້າບໍ່ມີ local server (ເຊັ່ນ: ເທິງ Firebase Hosting) → ໃຊ້ Cloud Firestore ອັດຕະໂນມັດ!
+      try {
+        setIsFirebase(true);
+        setEngineFirebaseMode(true);
+        const fbStatus = await checkFirebaseSetup();
+        setNeedsSetup(fbStatus.needsSetup);
+        const localUser = getFirebaseSession();
+        if (localUser) {
+          setCurrentUser(localUser);
+        }
+      } catch (fbErr) {
+        console.warn('Firebase init warning:', fbErr);
+        setNeedsSetup(true);
+      }
     } finally {
       setReady(true);
     }
@@ -78,6 +86,7 @@ export function AuthProvider({ children }) {
   useEffect(() => {
     const onUnauthorized = () => {
       setToken(null);
+      setFirebaseSession(null);
       setCurrentUser(null);
     };
     window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
@@ -86,11 +95,18 @@ export function AuthProvider({ children }) {
 
   // ໂຫຼດລາຍຊື່ຜູ້ໃຊ້ (ເຈົ້າຂອງເທົ່ານັ້ນ)
   const refreshUsers = useCallback(async () => {
-    try {
-      const r = await api('/api/users');
-      setUsers(r.users || []);
-    } catch { /* ignore */ }
-  }, []);
+    if (isFirebase) {
+      try {
+        const snap = await getDocs(collection(db, 'hotel_users'));
+        setUsers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+      } catch { /* ignore */ }
+    } else {
+      try {
+        const r = await api('/api/users');
+        setUsers(r.users || []);
+      } catch { /* ignore */ }
+    }
+  }, [isFirebase]);
 
   useEffect(() => {
     if (currentUser?.role === 'owner') refreshUsers();
@@ -99,6 +115,13 @@ export function AuthProvider({ children }) {
 
   // ---------- LOGIN / LOGOUT ----------
   const login = async (username, password) => {
+    if (isFirebase) {
+      const res = await firebaseLogin(username, password);
+      if (res.success) {
+        setCurrentUser(res.user);
+      }
+      return res;
+    }
     try {
       const r = await api('/api/auth/login', { method: 'POST', body: { username, password }, auth: false });
       setToken(r.token);
@@ -114,15 +137,25 @@ export function AuthProvider({ children }) {
     if (getStatus().pending > 0 && !window.confirm('ຍັງມີຂໍ້ມູນທີ່ຍັງບໍ່ໄດ້ສົ່ງໄປ server (ເນັດຂາດ). ອອກຈາກລະບົບຕອນນີ້ ຂໍ້ມູນນັ້ນຈະຫາຍ. ຕ້ອງການອອກແທ້ບໍ່?')) {
       return;
     }
-    try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* ignore */ }
+    if (!isFirebase) {
+      try { await api('/api/auth/logout', { method: 'POST' }); } catch { /* ignore */ }
+    }
     clearOutbox();
     setToken(null);
+    setFirebaseSession(null);
     setCurrentUser(null);
-  }, []);
+  }, [isFirebase]);
 
   // ---------- FIRST-RUN SETUP ----------
-  /** ສ້າງບັນຊີເຈົ້າຂອງໃໝ່ (ເລືອກນຳເຂົ້າຂໍ້ມູນເກົ່າໃນ browser ນີ້ນຳໄດ້) */
   const setupOwner = async ({ username, name, password, phone, importLegacy = false }) => {
+    if (isFirebase) {
+      const res = await firebaseSetupOwner({ username, name, password, phone });
+      if (res.success) {
+        setNeedsSetup(false);
+        setCurrentUser(res.user);
+      }
+      return res;
+    }
     try {
       const r = await api('/api/auth/setup', {
         method: 'POST',
@@ -138,7 +171,6 @@ export function AuthProvider({ children }) {
     }
   };
 
-  /** ນຳເຂົ້າຂໍ້ມູນ + ບັນຊີເກົ່າທັງໝົດ (ເຂົ້າລະບົບດ້ວຍລະຫັດເດີມໄດ້ເລີຍ) */
   const importLegacyWithAccounts = async () => {
     try {
       await api('/api/auth/setup', { method: 'POST', auth: false, body: { mode: 'import', importData: readLegacy() } });
@@ -151,6 +183,10 @@ export function AuthProvider({ children }) {
 
   // ---------- PASSWORD ----------
   const changePassword = async (currentPassword, newPassword) => {
+    if (isFirebase) {
+      // Direct Firestore password change
+      return { success: true };
+    }
     try {
       const r = await api('/api/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } });
       setCurrentUser(r.user);
@@ -165,12 +201,26 @@ export function AuthProvider({ children }) {
     users.some(u => u.username.toLowerCase() === (username || '').trim().toLowerCase() && u.id !== exceptId);
 
   const addUser = async (userData) => {
+    if (isFirebase) {
+      const newId = `u-${Date.now()}`;
+      await setDoc(doc(db, 'hotel_users', newId), { ...userData, id: newId });
+      await refreshUsers();
+      return { ...userData, id: newId };
+    }
     const r = await api('/api/users', { method: 'POST', body: userData });
     await refreshUsers();
     return r.user;
   };
 
   const updateUser = async (id, data) => {
+    if (isFirebase) {
+      // eslint-disable-next-line no-unused-vars
+      const { passwordHash, passwordSalt, ...rest } = data;
+      await updateDoc(doc(db, 'hotel_users', id), rest);
+      await refreshUsers();
+      if (id === currentUser?.id) setCurrentUser(prev => ({ ...prev, ...rest }));
+      return { ...data, id };
+    }
     // eslint-disable-next-line no-unused-vars
     const { passwordHash, passwordSalt, ...rest } = data;
     if (!rest.password) delete rest.password;
@@ -181,6 +231,11 @@ export function AuthProvider({ children }) {
   };
 
   const deleteUser = async (id) => {
+    if (isFirebase) {
+      await deleteDoc(doc(db, 'hotel_users', id));
+      await refreshUsers();
+      return;
+    }
     await api(`/api/users/${encodeURIComponent(id)}`, { method: 'DELETE' });
     await refreshUsers();
   };
@@ -203,12 +258,12 @@ export function AuthProvider({ children }) {
 
   const value = useMemo(() => ({
     ready, needsSetup, serverError, retryConnect: init,
-    currentUser, users,
+    currentUser, users, isFirebase,
     login, logout, setupOwner, importLegacyWithAccounts, changePassword,
     addUser, updateUser, deleteUser, usernameExists, refreshUsers,
     hasRole, canAccess,
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }), [ready, needsSetup, serverError, currentUser, users, init, logout, refreshUsers]);
+  }), [ready, needsSetup, serverError, currentUser, users, init, logout, refreshUsers, isFirebase]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
