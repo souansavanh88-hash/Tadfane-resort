@@ -10,6 +10,8 @@ import { api } from '../utils/api';
 import * as engine from '../utils/syncEngine';
 import { useAuth } from './AuthContext';
 import { useToast } from '../components/ToastProvider';
+import { getDocs, getDoc, collection, doc } from 'firebase/firestore';
+import { db } from '../config/firebase';
 
 const HotelContext = createContext(null);
 
@@ -110,6 +112,21 @@ export function HotelProvider({ children }) {
 
   const loadCatalog = useCallback(async () => {
     try {
+      if (engine.isFirebase()) {
+        const [roomsSnap, actsSnap, hDoc] = await Promise.all([
+          getDocs(collection(db, 'hotel_rooms')),
+          getDocs(collection(db, 'hotel_activities')),
+          getDoc(doc(db, 'hotel_info', 'general')),
+        ]);
+        setCatalog({
+          rooms: roomsSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+          guestActivities: actsSnap.docs.map(d => ({ id: d.id, ...d.data() })),
+          hotelInfo: hDoc.exists() ? hDoc.data() : initialHotelInfo,
+          ratePlans: [],
+        });
+        setDataError('');
+        return;
+      }
       const c = await api('/api/public/catalog', { auth: false });
       setCatalog(c);
       setDataError('');

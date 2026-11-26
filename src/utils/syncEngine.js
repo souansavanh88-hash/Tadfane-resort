@@ -42,6 +42,7 @@ let fbUnsubscribers = [];
 export function setFirebaseMode(val) {
   isFirebaseMode = !!val;
 }
+export const isFirebase = () => isFirebaseMode;
 
 function loadOutbox() {
   try { return JSON.parse(localStorage.getItem(OUTBOX_KEY) || '[]'); } catch { return []; }

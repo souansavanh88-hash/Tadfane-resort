@@ -18,8 +18,6 @@ function readLegacy() {
   try { return JSON.parse(localStorage.getItem(LEGACY_STORAGE_KEY) || '{}'); } catch { return {}; }
 }
 
-/** ສະຫຼຸບຂໍ້ມູນເກົ່າໃນ browser ນີ້ (ສຳລັບສະແດງໃນໜ້າຕັ້ງຄ່າຄັ້ງທຳອິດ) */
-// eslint-disable-next-line react-refresh/only-export-components
 export function getLegacySummary() {
   const d = readLegacy();
   const users = Array.isArray(d.users) ? d.users : [];
@@ -44,35 +42,53 @@ export function AuthProvider({ children }) {
   // ---------- ເລີ່ມຕົ້ນ: ກວດ server ຫຼື Firebase Firestore ----------
   const init = useCallback(async () => {
     setServerError('');
-    try {
-      // 1. ລອງເຊື່ອມຕໍ່ Node Server ທ້ອງຖິ່ນກ່ອນ (ຖ້າມີ)
-      const h = await api('/api/health', { auth: false });
-      setServerLanIps(h.lanIps);
-      setNeedsSetup(!!h.needsSetup);
-      setIsFirebase(false);
-      setEngineFirebaseMode(false);
-      if (getToken() && !h.needsSetup) {
-        try {
-          const me = await api('/api/auth/me');
-          setCurrentUser(me.user);
-        } catch (e) {
-          if (e.status === 401) setToken(null);
-          else throw e;
+    const isLocal = typeof window !== 'undefined' &&
+      (window.location.hostname === 'localhost' ||
+       window.location.hostname === '127.0.0.1' ||
+       window.location.port === '8080');
+
+    if (isLocal) {
+      try {
+        const h = await api('/api/health', { auth: false });
+        setServerLanIps(h.lanIps);
+        setNeedsSetup(!!h.needsSetup);
+        setIsFirebase(false);
+        setEngineFirebaseMode(false);
+        if (getToken() && !h.needsSetup) {
+          try {
+            const me = await api('/api/auth/me');
+            setCurrentUser(me.user);
+          } catch (e) {
+            if (e.status === 401) setToken(null);
+          }
         }
+        setReady(true);
+        return;
+      } catch (err) {
+        console.warn('Local API failed, falling back to Firebase:', err);
+      }
+    }
+
+    // Cloud / Firebase Hosting Mode
+    setIsFirebase(true);
+    setEngineFirebaseMode(true);
+
+    try {
+      // ໃຊ້ Promise.race ປ້ອງກັນການຄ້າງ (ບໍ່ໃຫ້ເກີນ 4 ວິນາທີ)
+      const timeout = new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 4000));
+      const fbStatus = await Promise.race([checkFirebaseSetup(), timeout]);
+      setNeedsSetup(fbStatus.needsSetup);
+      const localUser = getFirebaseSession();
+      if (localUser) {
+        setCurrentUser(localUser);
       }
     } catch {
-      // 2. ຖ້າບໍ່ມີ local server (ເຊັ່ນ: ເທິງ Firebase Hosting) → ໃຊ້ Cloud Firestore ອັດຕະໂນມັດ!
-      try {
-        setIsFirebase(true);
-        setEngineFirebaseMode(true);
-        const fbStatus = await checkFirebaseSetup();
-        setNeedsSetup(fbStatus.needsSetup);
-        const localUser = getFirebaseSession();
-        if (localUser) {
-          setCurrentUser(localUser);
-        }
-      } catch (fbErr) {
-        console.warn('Firebase init warning:', fbErr);
+      // ຖ້າ timeout ຫຼື offline, ໃຫ້ສະແດງໜ້າ Setup ຫຼື ໂຫຼດ session ທ້ອງຖິ່ນ
+      const localUser = getFirebaseSession();
+      if (localUser) {
+        setCurrentUser(localUser);
+        setNeedsSetup(false);
+      } else {
         setNeedsSetup(true);
       }
     } finally {
@@ -82,7 +98,7 @@ export function AuthProvider({ children }) {
 
   useEffect(() => { init(); }, [init]);
 
-  // session ໝົດອາຍຸ / ຖືກປິດບັນຊີ → ອອກຈາກລະບົບ
+  // session ໝົດອາຍຸ / ຖືກປິດບັນຊີ
   useEffect(() => {
     const onUnauthorized = () => {
       setToken(null);
@@ -93,7 +109,7 @@ export function AuthProvider({ children }) {
     return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
   }, []);
 
-  // ໂຫຼດລາຍຊື່ຜູ້ໃຊ້ (ເຈົ້າຂອງເທົ່ານັ້ນ)
+  // ໂຫຼດລາຍຊື່ຜູ້ໃຊ້
   const refreshUsers = useCallback(async () => {
     if (isFirebase) {
       try {
@@ -134,7 +150,7 @@ export function AuthProvider({ children }) {
 
   const logout = useCallback(async () => {
     try { await flush(); } catch { /* ignore */ }
-    if (getStatus().pending > 0 && !window.confirm('ຍັງມີຂໍ້ມູນທີ່ຍັງບໍ່ໄດ້ສົ່ງໄປ server (ເນັດຂາດ). ອອກຈາກລະບົບຕອນນີ້ ຂໍ້ມູນນັ້ນຈະຫາຍ. ຕ້ອງການອອກແທ້ບໍ່?')) {
+    if (getStatus().pending > 0 && !window.confirm('ຍັງມີຂໍ້ມູນທີ່ຍັງບໍ່ໄດ້ສົ່ງ (ເນັດຂາດ). ອອກຈາກລະບົບຕອນນີ້ ຂໍ້ມູນນັ້ນຈະຫາຍ. ຕ້ອງການອອກແທ້ບໍ່?')) {
       return;
     }
     if (!isFirebase) {
@@ -181,12 +197,8 @@ export function AuthProvider({ children }) {
     }
   };
 
-  // ---------- PASSWORD ----------
   const changePassword = async (currentPassword, newPassword) => {
-    if (isFirebase) {
-      // Direct Firestore password change
-      return { success: true };
-    }
+    if (isFirebase) return { success: true };
     try {
       const r = await api('/api/auth/change-password', { method: 'POST', body: { currentPassword, newPassword } });
       setCurrentUser(r.user);
@@ -196,7 +208,6 @@ export function AuthProvider({ children }) {
     }
   };
 
-  // ---------- USER MANAGEMENT (owner) ----------
   const usernameExists = (username, exceptId) =>
     users.some(u => u.username.toLowerCase() === (username || '').trim().toLowerCase() && u.id !== exceptId);
 
