@@ -55,9 +55,10 @@ function AppRoutes() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(true);
   const [showChangePassword, setShowChangePassword] = useState(false);
-  // Guest mode: check URL param or state
-  const [guestMode, setGuestMode] = useState(() => {
-    return new URLSearchParams(window.location.search).get('guest') === 'true';
+  // Default: Show public guest page unless ?login=true or ?admin=true is specified
+  const [showStaffLogin, setShowStaffLogin] = useState(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.get('login') === 'true' || params.get('admin') === 'true';
   });
 
   // Check if opened via guest booking share link (?booking=... or ?confirm=... or ?reg=...)
@@ -80,29 +81,27 @@ function AppRoutes() {
           encodedData={encodedData}
           onGoHome={() => {
             const url = new URL(window.location.href);
-            url.search = '?guest=true';
+            url.search = '';
             window.location.href = url.toString();
           }}
           onGoLogin={() => {
-            const url = new URL(window.location.href);
-            url.search = '';
-            window.location.href = url.toString();
+            setShowStaffLogin(true);
           }}
         />
       </Suspense>
     );
   }
 
-  // Show guest page if in guest mode (no login needed)
-  if (guestMode || !currentUser) {
-    if (guestMode) {
-      return (
-        <Suspense fallback={<PageLoader />}>
-          <GuestPage onGoLogin={() => setGuestMode(false)} />
-        </Suspense>
-      );
+  // Not logged in: Show the beautiful Guest Booking page by default!
+  if (!currentUser) {
+    if (showStaffLogin) {
+      return <LoginPage onGuestMode={() => setShowStaffLogin(false)} />;
     }
-    return <LoginPage onGuestMode={() => setGuestMode(true)} />;
+    return (
+      <Suspense fallback={<PageLoader />}>
+        <GuestPage onGoLogin={() => setShowStaffLogin(true)} />
+      </Suspense>
+    );
   }
 
   const navigate = (page) => {
